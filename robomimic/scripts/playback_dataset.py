@@ -67,6 +67,7 @@ import robomimic.utils.obs_utils as ObsUtils
 import robomimic.utils.env_utils as EnvUtils
 import robomimic.utils.file_utils as FileUtils
 from robomimic.envs.env_base import EnvBase, EnvType
+from robosuite.wrappers import VisualizationWrapper
 
 
 # Define default cameras to use for each env type
@@ -75,6 +76,16 @@ DEFAULT_CAMERAS = {
     EnvType.IG_MOMART_TYPE: ["rgb"],
     EnvType.GYM_TYPE: ValueError("No camera names supported for gym type env!"),
 }
+
+
+def downsample_array(original_array, fixed_size):
+    # Ensure the fixed_size is at least 2 to include the first and last elements
+    fixed_size = max(fixed_size, 2)
+    # Generate the indices to sample from the original array
+    indices = np.linspace(0, len(original_array) - 1, fixed_size, dtype=int)
+    # Select the elements at the generated indices
+    downsampled_array = original_array[indices]
+    return downsampled_array
 
 
 def playback_trajectory_with_env(
@@ -87,6 +98,8 @@ def playback_trajectory_with_env(
     video_skip=5, 
     camera_names=None,
     first=False,
+    demo_idx =None, 
+    sample_size = None,
 ):
     """
     Helper function to playback a single trajectory using the simulator environment.
@@ -112,14 +125,17 @@ def playback_trajectory_with_env(
     assert not (render and write_video)
 
     # load the initial state
-    env.reset()
-    env.reset_to(initial_state)
+    # env.reset()
+    # env.reset_to(initial_state)
 
     traj_len = states.shape[0]
     action_playback = (actions is not None)
     if action_playback:
         assert states.shape[0] == actions.shape[0]
 
+    assert sample_size is not None
+    orig_idx = np.array(range(traj_len))
+    sampled_idx = downsample_array(orig_idx, sample_size)
     for i in range(traj_len):
         if action_playback:
             env.step(actions[i])
@@ -131,6 +147,14 @@ def playback_trajectory_with_env(
                     print("warning: playback diverged by {} at step {}".format(err, i))
         else:
             env.reset_to({"states" : states[i]})
+        
+        assert demo_idx is not None
+        if i in sampled_idx:
+            in_demo_idx = np.where(sampled_idx == i)[0]
+            assert len(in_demo_idx) == 1
+            ic_idx = demo_idx * sample_size + in_demo_idx.item()
+            env.env.set_indicator_pos("site{}".format(ic_idx), env.env._get_observations(force_update=True)["robot0_eef_pos"])
+            env.env.sim.forward()
 
         # on-screen render
         if render:
@@ -243,10 +267,33 @@ def playback_dataset(args):
     if write_video:
         video_writer = imageio.get_writer(args.video_path, fps=20)
 
+    if not args.use_obs:
+        sample_size = 100
+        ic = []
+        for i in range(len(demos)):
+            rgba = np.random.uniform(0, 1, 3).tolist() + [0.5]
+            ic += [
+                {
+                "type": "sphere",
+                "size": [0.002],
+                "rgba": rgba,
+                "name": "site{}".format(i * sample_size + j),
+                }
+                for j in range(sample_size)
+            ]
+
+        env.env = VisualizationWrapper(env.env, indicator_configs=ic)
+        env.env.reset()
+        env.env.set_visualization_setting('grippers', True)
+
+    
+    from IPython import embed
+    embed()
+
     for ind in range(len(demos)):
         ep = demos[ind]
         print("Playing back episode: {}".format(ep))
-
+        
         if args.use_obs:
             playback_trajectory_with_obs(
                 traj_grp=f["data/{}".format(ep)], 
@@ -277,6 +324,8 @@ def playback_dataset(args):
             video_skip=args.video_skip,
             camera_names=args.render_image_names,
             first=args.first,
+            demo_idx=ind,
+            sample_size=sample_size,
         )
 
     f.close()
