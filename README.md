@@ -1,5 +1,14 @@
 # robomimic
 
+To visualize demo dataset
+```
+python playback_dataset.py 
+--dataset ../../datasets/square/ph/low_dim_v141.hdf5 
+--render_image_names agentview frontview 
+--video_path /tmp/playback_dataset.mp4 
+--n 20
+```
+
 <p align="center">
   <img width="24.0%" src="docs/images/task_lift.gif">
   <img width="24.0%" src="docs/images/task_can.gif">

@@ -123,3 +123,6 @@ venv.bak/
 
 # private macros
 macros_private.py
+results
+robomimic/exps/paper
+robomimic/scripts/MUJOCO_LOG.TXT

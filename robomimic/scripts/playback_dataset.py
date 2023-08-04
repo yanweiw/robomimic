@@ -124,9 +124,10 @@ def playback_trajectory_with_env(
     video_count = 0
     assert not (render and write_video)
 
-    # load the initial state
-    # env.reset()
-    # env.reset_to(initial_state)
+    if actions is not None:
+        # load the initial state (it will close the simulation window and re-open it)
+        env.reset()
+        env.reset_to(initial_state)
 
     traj_len = states.shape[0]
     action_playback = (actions is not None)
@@ -136,6 +137,8 @@ def playback_trajectory_with_env(
     assert sample_size is not None
     orig_idx = np.array(range(traj_len))
     sampled_idx = downsample_array(orig_idx, sample_size)
+    # sampled_idx = downsample_array(orig_idx, sample_size//2)
+
     for i in range(traj_len):
         if action_playback:
             env.step(actions[i])
@@ -151,9 +154,9 @@ def playback_trajectory_with_env(
         assert demo_idx is not None
         if i in sampled_idx:
             in_demo_idx = np.where(sampled_idx == i)[0]
-            assert len(in_demo_idx) == 1
-            ic_idx = demo_idx * sample_size + in_demo_idx.item()
+            ic_idx = demo_idx * sample_size + in_demo_idx[0]
             env.env.set_indicator_pos("site{}".format(ic_idx), env.env._get_observations(force_update=True)["robot0_eef_pos"])
+            # env.env.set_indicator_pos("site{}".format(ic_idx+sample_size//2), env.env._get_observations(force_update=True)["robot1_eef_pos"])
             env.env.sim.forward()
 
         # on-screen render
@@ -268,14 +271,14 @@ def playback_dataset(args):
         video_writer = imageio.get_writer(args.video_path, fps=20)
 
     if not args.use_obs:
-        sample_size = 100
+        sample_size = 400
         ic = []
         for i in range(len(demos)):
-            rgba = np.random.uniform(0, 1, 3).tolist() + [0.5]
+            rgba = np.random.uniform(0, 1, 3).tolist() + [1.0]
             ic += [
                 {
                 "type": "sphere",
-                "size": [0.002],
+                "size": [0.004],
                 "rgba": rgba,
                 "name": "site{}".format(i * sample_size + j),
                 }
@@ -287,8 +290,8 @@ def playback_dataset(args):
         env.env.set_visualization_setting('grippers', True)
 
     
-    from IPython import embed
-    embed()
+    # from IPython import embed
+    # embed()
 
     for ind in range(len(demos)):
         ep = demos[ind]
