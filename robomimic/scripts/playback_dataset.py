@@ -93,6 +93,7 @@ def playback_trajectory_with_env(
     env, 
     initial_state, 
     states, 
+    orig_pos = None,
     actions=None, 
     render=False, 
     video_writer=None, 
@@ -143,17 +144,19 @@ def playback_trajectory_with_env(
     if action_playback:
         # env.reset() # load the initial state (it will close the simulation window and re-open it)
         # env.reset_to(initial_state)        
-        env.reset_to({"states": states[0]})
+        # env.reset_to({"states": states[0]})
         
         # get the orignal sequence of ee positions by playing back joint states
-        ee_pos_orig = []
-        for i in range(len(states)):
+        # ee_pos_orig = []
+        # for i in range(len(states)):
+        #     if i in sampled_idx:
+        #         env.reset_to({"states" : states[i]})
+        #         ee_pos = env.env._get_observations(force_update=True)["robot0_eef_pos"]
+        #         ee_pos_orig.append(ee_pos)        
+        for i, ee_pos in enumerate(orig_pos):
             if i in sampled_idx:
-                env.reset_to({"states" : states[i]})
-                ee_pos = env.env._get_observations(force_update=True)["robot0_eef_pos"]
-                ee_pos_orig.append(ee_pos)        
-        for in_demo_idx, ee_pos in enumerate(ee_pos_orig):
-            ic_idx = demo_idx * sample_size + in_demo_idx
+                in_demo_idx = np.where(sampled_idx == i)[0][0]
+                ic_idx = demo_idx * sample_size + in_demo_idx
             env.env.set_indicator_pos("site{}".format(ic_idx), ee_pos)
             ic_list.append("site{}".format(ic_idx))
             # env.env.sim.forward()
@@ -199,6 +202,7 @@ def playback_trajectory_with_env(
         if first:
             break
 
+    from IPython import embed; embed()
     # remove the indicator sites to reduce clutter
     if action_playback:
         for ic in ic_list:
@@ -248,8 +252,8 @@ def perturb_traj(orig, pert_range=0.1):
     impulse_targets = []
     for curr in impulse_mean_action:
         target = random.uniform(curr-pert_range, curr+pert_range)
-        if target < -1: target = -1
-        if target > 1: target = 1
+        # if target < -1: target = -1
+        # if target > 1: target = 1
         impulse_targets.append(target)
     # impulse_target_x = random.uniform(-8, 8)
     # impulse_target_y = random.uniform(-8, 8)
@@ -296,13 +300,20 @@ def playback_dataset(args):
         ObsUtils.initialize_obs_utils_with_obs_specs(obs_modality_specs=dummy_spec)
 
         env_meta = FileUtils.get_env_metadata_from_dataset(dataset_path=args.dataset)
+        # directly control ee pose
+        env_meta['env_kwargs']['controller_configs']['control_delta'] = False
+        env_meta['env_kwargs']['controller_configs']['control_ori'] = False
+        env_meta['env_kwargs']['controller_configs']['kp'] = 1000
+        env_meta['env_kwargs']['controller_configs']['kp_limits'] = [0, 1000]
+        env_meta['env_kwargs']['controller_configs']['output_max'] = [2, 2, 2, 1, 1, 1, 1] # these values are just placeholders
+        env_meta['env_kwargs']['controller_configs']['output_min'] = [-2, -2, -2, -1, -1, -1, -1]        
         env = EnvUtils.create_env_from_metadata(env_meta=env_meta, render=args.render, render_offscreen=write_video)
 
         # some operations for playback are robosuite-specific, so determine if this environment is a robosuite env
         is_robosuite_env = EnvUtils.is_robosuite_env(env_meta)
 
     f = h5py.File(args.dataset, "r")
-
+    # from IPython import embed; embed()
     # list of all demonstration episodes (sorted in increasing number order)
     if args.filter_key is not None:
         print("using filter key: {}".format(args.filter_key))
@@ -383,12 +394,22 @@ def playback_dataset(args):
         actions = None
         if args.use_actions:
             actions = f["data/{}/actions".format(ep)][()]
-            actions = perturb_traj(actions, pert_range=0.5)
+
+            # supply eef pos
+            orig_pos = f["data/{}/obs/robot0_eef_pos".format(ep)][()] # [()] turn h5py dataset into numpy array
+            eef_pos = perturb_traj(orig_pos, pert_range=0.2)
+            # supply eef quat 
+            eef_quat = f["data/{}/obs/robot0_eef_quat".format(ep)][()]
+            # actions = np.hstack((eef_pos, eef_quat, actions[:, [-1]])) # append gripper action
+            actions = np.hstack((eef_pos, actions[:, [-1]])) # append gripper action
+
+
+        # from IPython import embed; embed()
 
         playback_trajectory_with_env(
             env=env, 
             initial_state=initial_state, 
-            states=states, actions=actions, 
+            states=states, orig_pos=orig_pos, actions=actions, 
             render=args.render, 
             video_writer=video_writer, 
             video_skip=args.video_skip,
