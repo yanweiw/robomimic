@@ -9,6 +9,11 @@ python playback_dataset.py
 --n 20
 ```
 
+To playback dataset
+```
+python playback_dataset.py --dataset ../../datasets/can/ph/low_dim_v141.hdf5 --render_iamge_names agentview --render (or --video_path) (--use_actions) --n 10 --ic 100
+```
+
 <p align="center">
   <img width="24.0%" src="docs/images/task_lift.gif">
   <img width="24.0%" src="docs/images/task_can.gif">

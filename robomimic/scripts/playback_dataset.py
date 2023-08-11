@@ -4,7 +4,7 @@ one by one or loading the first state and playing actions back open-loop.
 The script can generate videos as well, by rendering simulation frames
 during playback. The videos can also be generated using the image observations
 in the dataset (this is useful for real-robot datasets) by using the
---use-obs argument.
+--use_obs argument.
 
 Args:
     dataset (str): path to hdf5 dataset
@@ -14,10 +14,10 @@ Args:
 
     n (int): if provided, stop after n trajectories are processed
 
-    use-obs (bool): if flag is provided, visualize trajectories with dataset 
+    use_obs (bool): if flag is provided, visualize trajectories with dataset 
         image observations instead of simulator
 
-    use-actions (bool): if flag is provided, use open-loop action playback 
+    use_actions (bool): if flag is provided, use open-loop action playback 
         instead of loading sim states
 
     render (bool): if flag is provided, use on-screen rendering during playback
@@ -41,12 +41,12 @@ Example usage below:
 
     # playback the actions in the dataset, and render agentview camera during playback to video
     python playback_dataset.py --dataset /path/to/dataset.hdf5 \
-        --use-actions --render_image_names agentview \
+        --use_actions --render_image_names agentview \
         --video_path /tmp/playback_dataset_with_actions.mp4
 
     # use the observations stored in the dataset to render videos of the dataset trajectories
     python playback_dataset.py --dataset /path/to/dataset.hdf5 \
-        --use-obs --render_image_names agentview_image \
+        --use_obs --render_image_names agentview_image \
         --video_path /tmp/obs_trajectory.mp4
 
     # visualize initial states in the demonstration data
@@ -61,6 +61,7 @@ import h5py
 import argparse
 import imageio
 import numpy as np
+import random
 
 import robomimic
 import robomimic.utils.obs_utils as ObsUtils
@@ -124,40 +125,62 @@ def playback_trajectory_with_env(
     video_count = 0
     assert not (render and write_video)
 
-    if actions is not None:
-        # load the initial state (it will close the simulation window and re-open it)
-        env.reset()
-        env.reset_to(initial_state)
-
-    traj_len = states.shape[0]
     action_playback = (actions is not None)
     if action_playback:
         assert states.shape[0] == actions.shape[0]
 
+    # downsample the trajectory to a fixed size for visualization
     assert sample_size is not None
-    orig_idx = np.array(range(traj_len))
-    sampled_idx = downsample_array(orig_idx, sample_size)
-    # sampled_idx = downsample_array(orig_idx, sample_size//2)
-
-    for i in range(traj_len):
-        if action_playback:
-            env.step(actions[i])
-            if i < traj_len - 1:
-                # check whether the actions deterministically lead to the same recorded states
-                state_playback = env.get_state()["states"]
-                if not np.all(np.equal(states[i + 1], state_playback)):
-                    err = np.linalg.norm(states[i + 1] - state_playback)
-                    print("warning: playback diverged by {} at step {}".format(err, i))
-        else:
-            env.reset_to({"states" : states[i]})
+    orig_idx = np.array(range(states.shape[0]))
+    if action_playback: 
+        # save the first half of sites for original data; and the second half for perturbed data
+        sampled_idx = downsample_array(orig_idx, sample_size//2)
+    else:
+        sampled_idx = downsample_array(orig_idx, sample_size)
+    
+    # plot the original ee positions as a reference
+    ic_list = []
+    if action_playback:
+        # env.reset() # load the initial state (it will close the simulation window and re-open it)
+        # env.reset_to(initial_state)        
+        env.reset_to({"states": states[0]})
         
-        assert demo_idx is not None
+        # get the orignal sequence of ee positions by playing back joint states
+        ee_pos_orig = []
+        for i in range(len(states)):
+            if i in sampled_idx:
+                env.reset_to({"states" : states[i]})
+                ee_pos = env.env._get_observations(force_update=True)["robot0_eef_pos"]
+                ee_pos_orig.append(ee_pos)        
+        for in_demo_idx, ee_pos in enumerate(ee_pos_orig):
+            ic_idx = demo_idx * sample_size + in_demo_idx
+            env.env.set_indicator_pos("site{}".format(ic_idx), ee_pos)
+            ic_list.append("site{}".format(ic_idx))
+            # env.env.sim.forward()
+        env.reset_to({"states": states[0]})
+
+    # render the simulation
+    for i in range(len(states)):
+        if not action_playback:
+            env.reset_to({"states" : states[i]})
+        else:
+            env.step(actions[i])
+            # if i < len(states) - 1:
+            #     # check whether the actions deterministically lead to the same recorded states
+            #     state_playback = env.get_state()["states"]
+            #     if not np.all(np.equal(states[i + 1], state_playback)):
+            #         err = np.linalg.norm(states[i + 1] - state_playback)
+            #         print("warning: playback diverged by {} at step {}".format(err, i))
+        
         if i in sampled_idx:
-            in_demo_idx = np.where(sampled_idx == i)[0]
-            ic_idx = demo_idx * sample_size + in_demo_idx[0]
+            in_demo_idx = np.where(sampled_idx == i)[0][0]
+            ic_idx = demo_idx * sample_size + in_demo_idx
+            if action_playback:
+                ic_idx += sample_size//2
+            
             env.env.set_indicator_pos("site{}".format(ic_idx), env.env._get_observations(force_update=True)["robot0_eef_pos"])
-            # env.env.set_indicator_pos("site{}".format(ic_idx+sample_size//2), env.env._get_observations(force_update=True)["robot1_eef_pos"])
-            env.env.sim.forward()
+            ic_list.append("site{}".format(ic_idx))
+            # env.env.sim.forward()
 
         # on-screen render
         if render:
@@ -175,6 +198,11 @@ def playback_trajectory_with_env(
 
         if first:
             break
+
+    # remove the indicator sites to reduce clutter
+    if action_playback:
+        for ic in ic_list:
+            env.env.set_indicator_pos(ic, [0, 0, 0])
 
 
 def playback_trajectory_with_obs(
@@ -210,6 +238,29 @@ def playback_trajectory_with_obs(
 
         if first:
             break
+
+def perturb_traj(orig, pert_range=0.1):
+    # orig actions (traj_len, 7), this is perturbation in the joint space
+    impulse_start = random.randint(0, len(orig)-2)
+    impulse_end = random.randint(impulse_start+1, len(orig)-1)
+    impulse_mean = (impulse_start + impulse_end)//2
+    impulse_mean_action = orig[impulse_mean]
+    impulse_targets = []
+    for curr in impulse_mean_action:
+        target = random.uniform(curr-pert_range, curr+pert_range)
+        if target < -1: target = -1
+        if target > 1: target = 1
+        impulse_targets.append(target)
+    # impulse_target_x = random.uniform(-8, 8)
+    # impulse_target_y = random.uniform(-8, 8)
+    max_relative_dist = 5 # np.exp(-5) ~= 0.006
+
+    kernel = np.exp(-max_relative_dist*(np.array(range(len(orig))) - impulse_mean)**2 / ((impulse_start-impulse_mean)**2))
+    perturbed = orig.copy()
+    for i in range(orig.shape[1]):
+        perturbed[:, i] += (impulse_targets[i]-perturbed[:, i])*kernel
+
+    return perturbed
 
 
 def playback_dataset(args):
@@ -271,27 +322,42 @@ def playback_dataset(args):
         video_writer = imageio.get_writer(args.video_path, fps=20)
 
     if not args.use_obs:
-        sample_size = 400
+        sample_size = args.ic
+        if args.use_actions:
+            sample_size = sample_size * 2
         ic = []
         for i in range(len(demos)):
-            rgba = np.random.uniform(0, 1, 3).tolist() + [1.0]
+            rgba_random = np.random.uniform(0, 1, 3).tolist() + [0.5]
+            blue = [0, 0, 1, 1] 
+            red = [1, 0, 0, 1]
+            if args.use_actions:
+                rgba1 = blue
+                rgba2 = red
+            else:
+                rgba1 = rgba_random
+                rgba2 = rgba_random
             ic += [
                 {
                 "type": "sphere",
                 "size": [0.004],
-                "rgba": rgba,
+                "rgba": rgba1,
                 "name": "site{}".format(i * sample_size + j),
                 }
-                for j in range(sample_size)
+                for j in range(sample_size//2)
+            ]
+            ic += [
+                {
+                "type": "sphere",
+                "size": [0.004],
+                "rgba": rgba2,
+                "name": "site{}".format(i * sample_size + sample_size//2 + j),
+                }
+                for j in range(sample_size//2)
             ]
 
         env.env = VisualizationWrapper(env.env, indicator_configs=ic)
         env.env.reset()
         env.env.set_visualization_setting('grippers', True)
-
-    
-    # from IPython import embed
-    # embed()
 
     for ind in range(len(demos)):
         ep = demos[ind]
@@ -317,6 +383,7 @@ def playback_dataset(args):
         actions = None
         if args.use_actions:
             actions = f["data/{}/actions".format(ep)][()]
+            actions = perturb_traj(actions, pert_range=0.5)
 
         playback_trajectory_with_env(
             env=env, 
@@ -349,7 +416,13 @@ if __name__ == "__main__":
         default=None,
         help="(optional) filter key, to select a subset of trajectories in the file",
     )
-
+    # number of visualization sites
+    parser.add_argument(
+        "--ic", 
+        type=int,
+        default=200,
+        help="(optional) number of visualization sites",
+    )
     # number of trajectories to playback. If omitted, playback all of them.
     parser.add_argument(
         "--n",
@@ -360,14 +433,14 @@ if __name__ == "__main__":
 
     # Use image observations instead of doing playback using the simulator env.
     parser.add_argument(
-        "--use-obs",
+        "--use_obs",
         action='store_true',
         help="visualize trajectories with dataset image observations instead of simulator",
     )
 
     # Playback stored dataset actions open-loop instead of loading from simulation states.
     parser.add_argument(
-        "--use-actions",
+        "--use_actions",
         action='store_true',
         help="use open-loop action playback instead of loading sim states",
     )
