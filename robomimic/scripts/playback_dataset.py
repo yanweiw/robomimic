@@ -81,6 +81,7 @@ DEFAULT_CAMERAS = {
 
 def downsample_array(original_array, fixed_size):
     # Ensure the fixed_size is at least 2 to include the first and last elements
+    assert fixed_size >= 2
     fixed_size = max(fixed_size, 2)
     # Generate the indices to sample from the original array
     indices = np.linspace(0, len(original_array) - 1, fixed_size, dtype=int)
@@ -102,6 +103,7 @@ def playback_trajectory_with_env(
     first=False,
     demo_idx =None, 
     sample_size = None,
+    data_save_path = None,
 ):
     """
     Helper function to playback a single trajectory using the simulator environment.
@@ -157,11 +159,17 @@ def playback_trajectory_with_env(
             if i in sampled_idx:
                 in_demo_idx = np.where(sampled_idx == i)[0][0]
                 ic_idx = demo_idx * sample_size + in_demo_idx
-            env.env.set_indicator_pos("site{}".format(ic_idx), ee_pos)
-            ic_list.append("site{}".format(ic_idx))
-            # env.env.sim.forward()
+                env.env.set_indicator_pos("site{}".format(ic_idx), ee_pos)
+                # print("setting indiciator sites{}".format(ic_idx))
+                ic_list.append("site{}".format(ic_idx))
+                # env.env.sim.forward()
         env.reset_to({"states": states[0]})
 
+    # acculate data for each step
+    keys = list(env.env.observation_spec().keys())
+    keys.append('states')
+    dict_of_arrays = {key: [] for key in keys}
+    # from IPython import embed; embed()
     # render the simulation
     for i in range(len(states)):
         if not action_playback:
@@ -174,7 +182,13 @@ def playback_trajectory_with_env(
             #     if not np.all(np.equal(states[i + 1], state_playback)):
             #         err = np.linalg.norm(states[i + 1] - state_playback)
             #         print("warning: playback diverged by {} at step {}".format(err, i))
-        
+            if data_save_path is not None:
+                # save the data for each step
+                dict_of_arrays['states'].append(env.get_state()["states"])
+                obs = env.env.observation_spec()
+                for key in obs.keys():
+                    dict_of_arrays[key].append(obs[key])
+
         if i in sampled_idx:
             in_demo_idx = np.where(sampled_idx == i)[0][0]
             ic_idx = demo_idx * sample_size + in_demo_idx
@@ -182,6 +196,7 @@ def playback_trajectory_with_env(
                 ic_idx += sample_size//2
             
             env.env.set_indicator_pos("site{}".format(ic_idx), env.env._get_observations(force_update=True)["robot0_eef_pos"])
+            # print("setting indiciator sites{}".format(ic_idx))
             ic_list.append("site{}".format(ic_idx))
             # env.env.sim.forward()
 
@@ -202,12 +217,17 @@ def playback_trajectory_with_env(
         if first:
             break
 
-    from IPython import embed; embed()
+    # from IPython import embed; embed()
     # remove the indicator sites to reduce clutter
     if action_playback:
         for ic in ic_list:
             env.env.set_indicator_pos(ic, [0, 0, 0])
 
+    if data_save_path is not None:
+        dict_of_arrays = {key: np.vstack(dict_of_arrays[key]) for key in dict_of_arrays.keys()}
+        return dict_of_arrays, env.get_reward()
+    else:
+        return None, None
 
 def playback_trajectory_with_obs(
     traj_grp,
@@ -245,8 +265,9 @@ def playback_trajectory_with_obs(
 
 def perturb_traj(orig, pert_range=0.1):
     # orig actions (traj_len, 7), this is perturbation in the joint space
-    impulse_start = random.randint(0, len(orig)-2)
-    impulse_end = random.randint(impulse_start+1, len(orig)-1)
+    assert len(orig) > 10
+    impulse_start = random.randint(0, len(orig)-10)
+    impulse_end = random.randint(impulse_start+8, len(orig)-1)
     impulse_mean = (impulse_start + impulse_end)//2
     impulse_mean_action = orig[impulse_mean]
     impulse_targets = []
@@ -299,6 +320,7 @@ def playback_dataset(args):
         )
         ObsUtils.initialize_obs_utils_with_obs_specs(obs_modality_specs=dummy_spec)
 
+        # from IPython import embed; embed()
         env_meta = FileUtils.get_env_metadata_from_dataset(dataset_path=args.dataset)
         # directly control ee pose
         env_meta['env_kwargs']['controller_configs']['control_delta'] = False
@@ -373,6 +395,12 @@ def playback_dataset(args):
     for ind in range(len(demos)):
         ep = demos[ind]
         print("Playing back episode: {}".format(ep))
+
+        orig_pos = None
+        data_save_path = None
+        if args.gen_data_dir is not None:
+            data_save_path = os.path.join(args.gen_data_dir, ep)
+            os.makedirs(data_save_path, exist_ok=True)        
         
         if args.use_obs:
             playback_trajectory_with_obs(
@@ -387,8 +415,9 @@ def playback_dataset(args):
         # prepare initial state to reload from
         states = f["data/{}/states".format(ep)][()]
         initial_state = dict(states=states[0])
-        if is_robosuite_env:
-            initial_state["model"] = f["data/{}".format(ep)].attrs["model_file"]
+
+        # if is_robosuite_env:
+        #     initial_state["model"] = f["data/{}".format(ep)].attrs["model_file"]
 
         # supply actions if using open-loop action playback
         actions = None
@@ -406,7 +435,7 @@ def playback_dataset(args):
 
         # from IPython import embed; embed()
 
-        playback_trajectory_with_env(
+        dict_of_obs, success = playback_trajectory_with_env(
             env=env, 
             initial_state=initial_state, 
             states=states, orig_pos=orig_pos, actions=actions, 
@@ -417,7 +446,17 @@ def playback_dataset(args):
             first=args.first,
             demo_idx=ind,
             sample_size=sample_size,
+            data_save_path=data_save_path,
         )
+
+        # from IPython import embed; embed()
+        if args.gen_data_dir is not None:
+            dict_of_obs['success'] = success
+            # dict_of_obs['env_args'] = f['data'].attrs['env_args']
+            with open(os.path.join(data_save_path, "env_args.txt"), "w") as outfile:
+                outfile.write(f['data'].attrs['env_args'])
+        
+            np.savez(os.path.join(data_save_path, 'obs.npz'), **dict_of_obs)
 
     f.close()
     if write_video:
@@ -430,6 +469,12 @@ if __name__ == "__main__":
         "--dataset",
         type=str,
         help="path to hdf5 dataset",
+    )
+    parser.add_argument(
+        "--gen_data_dir",
+        type=str,
+        default=None,
+        help="(optional) path to directory where generated data is stored",
     )
     parser.add_argument(
         "--filter_key",
