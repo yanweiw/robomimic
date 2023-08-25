@@ -181,10 +181,12 @@ def playback_trajectory_with_env(
     with torch.no_grad():
         mode, mode_log = model.net.pred_mode(mode_pred_states.cuda())
     mode = mode.reshape(-1, traj_len, model.net.num_guess, model.net.num_modes)[:, :, guess_idx, :]
-    color_matrix = torch.tensor(mode_colors)[:model.net.num_modes, :]
-    mode = torch.matmul(mode, color_matrix.cuda())
-    mode = torch.clamp(mode, min=0, max=1)
-    mode = mode.detach().cpu().numpy()[0] # indexing to remove batch dim
+    # color_matrix = torch.tensor(mode_colors)[:model.net.num_modes, :]
+    # mode = torch.matmul(mode, color_matrix.cuda())
+    # mode = torch.clamp(mode, min=0, max=1)
+    mode_idx = torch.argmax(mode, dim=-1)
+    # assert mode_idx.shape == mode.shape[:2]
+    mode_idx = mode_idx.detach().cpu().numpy()[0] # indexing to remove batch dim
 
     # render the simulation
     for i in range(len(states)):
@@ -210,8 +212,9 @@ def playback_trajectory_with_env(
             ic_idx = demo_idx * sample_size + in_demo_idx
             if action_playback:
                 ic_idx += sample_size//2
+            # env.env.set_indicator_pos("site{}".format(ic_idx), env.env._get_observations(force_update=True)["robot0_eef_pos"])
             
-            env.env.set_indicator_pos("site{}".format(ic_idx), env.env._get_observations(force_update=True)["robot0_eef_pos"])
+            env.env.set_indicator_pos("mode_{}_{}".format(mode_idx[i], ic_idx), env.env._get_observations(force_update=True)["robot0_eef_pos"])
             # print("setting indiciator sites{}".format(ic_idx))
             ic_list.append("site{}".format(ic_idx))
             # env.env.sim.forward()
@@ -226,7 +229,8 @@ def playback_trajectory_with_env(
                 video_img = []
                 for cam_name in camera_names:
                     orig_img = env.render(mode="rgb_array", height=512, width=512, camera_name=cam_name)
-                    boundary_color = mode[i] * 255
+                    # boundary_color = mode[i] * 255
+                    boundary_color = np.array(mode_colors[mode_idx[i]]) * 255
                     orig_img[:20, :] = boundary_color
                     video_img.append(orig_img)
                 video_img = np.concatenate(video_img, axis=1) # concatenate horizontally
@@ -377,43 +381,59 @@ def playback_dataset(args):
         sample_size = args.ic
         if args.use_actions:
             sample_size = sample_size * 2
+
         ic = []
         for i in range(len(demos)):
-            rgba_random = np.random.uniform(0, 1, 3).tolist() + [0.5]
-            blue = [0, 0, 1, 1] 
-            red = [1, 0, 0, 1]
-            if args.use_actions:
-                rgba1 = blue
-                rgba2 = red
-            else:
-                rgba1 = rgba_random
-                rgba2 = rgba_random
-            ic += [
-                {
-                "type": "sphere",
-                "size": [0.004],
-                "rgba": rgba1,
-                "name": "site{}".format(i * sample_size + j),
-                }
-                for j in range(sample_size//2)
-            ]
-            ic += [
-                {
-                "type": "sphere",
-                "size": [0.004],
-                "rgba": rgba2,
-                "name": "site{}".format(i * sample_size + sample_size//2 + j),
-                }
-                for j in range(sample_size//2)
-            ]
+            for mode_idx, color in enumerate(mode_colors):
+                rgba = color + [0.5]
+                ic += [
+                    {
+                    "type": "sphere",
+                    "size": [0.004],
+                    "rgba": rgba,
+                    "name": "mode_{}_{}".format(mode_idx, i * sample_size + j),
+                    }
+                    for j in range(sample_size)
+                ]
+
+        # ic = []
+        # for i in range(len(demos)):
+        #     rgba_random = np.random.uniform(0, 1, 3).tolist() + [0.5]
+        #     blue = [0, 0, 1, 1] 
+        #     red = [1, 0, 0, 1]
+        #     if args.use_actions:
+        #         rgba1 = blue
+        #         rgba2 = red
+        #     else:
+        #         rgba1 = rgba_random
+        #         rgba2 = rgba_random
+        #     ic += [
+        #         {
+        #         "type": "sphere",
+        #         "size": [0.004],
+        #         "rgba": rgba1,
+        #         "name": "site{}".format(i * sample_size + j),
+        #         }
+        #         for j in range(sample_size//2)
+        #     ]
+        #     ic += [
+        #         {
+        #         "type": "sphere",
+        #         "size": [0.004],
+        #         "rgba": rgba2,
+        #         "name": "site{}".format(i * sample_size + sample_size//2 + j),
+        #         }
+        #         for j in range(sample_size//2)
+        #     ]
 
         env.env = VisualizationWrapper(env.env, indicator_configs=ic)
         env.env.reset()
         env.env.set_visualization_setting('grippers', True)
-        from IPython import embed; embed()
+        # from IPython import embed; embed()
 
     # load trained up model
-    eva = eval.Evaluator('yanweiw/robosuite/o4vfobq9')
+    # eva = eval.Evaluator('yanweiw/robosuite/o4vfobq9')
+    eva = eval.Evaluator('yanweiw/robosuite/1lowvejn')
     eva.load_model(epoch_num=99000, root_dir='/home/felixw/mode_learning/weights')      
 
     # loop to visualize each trajectory
@@ -477,6 +497,7 @@ def playback_dataset(args):
             data_save_path=data_save_path,
             mode_pred_states=mode_pred_states,
             model=eva,
+            guess_idx=args.guess_idx,
         )
 
         # from IPython import embed; embed()
@@ -516,7 +537,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--ic", 
         type=int,
-        default=200,
+        default=100,
         help="(optional) number of visualization sites",
     )
     # number of trajectories to playback. If omitted, playback all of them.
@@ -579,6 +600,13 @@ if __name__ == "__main__":
         "--first",
         action='store_true',
         help="use first frame of each episode",
+    )
+
+    parser.add_argument(
+        "--guess_idx",
+        type=int,
+        default=0,
+        help="index of the guess to visualize",
     )
 
     args = parser.parse_args()
