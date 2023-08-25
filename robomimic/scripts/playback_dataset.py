@@ -69,6 +69,11 @@ import robomimic.utils.env_utils as EnvUtils
 import robomimic.utils.file_utils as FileUtils
 from robomimic.envs.env_base import EnvBase, EnvType
 from robosuite.wrappers import VisualizationWrapper
+import sys 
+sys.path.append('../../../mode_learning')
+import eval 
+import torch
+import cv2
 
 
 # Define default cameras to use for each env type
@@ -77,6 +82,16 @@ DEFAULT_CAMERAS = {
     EnvType.IG_MOMART_TYPE: ["rgb"],
     EnvType.GYM_TYPE: ValueError("No camera names supported for gym type env!"),
 }
+
+mode_colors = [[1.0, 0.0, 0.0], 
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+                [0.5, 0.5, 0.0], 
+                [0.5, 0.0, 0.5],
+                [0.0, 0.5, 0.5],
+                [0.6, 0.2, 0.2], 
+                [0.2, 0.6, 0.2],
+                [0.2, 0.2, 0.6]]
 
 
 def downsample_array(original_array, fixed_size):
@@ -104,6 +119,9 @@ def playback_trajectory_with_env(
     demo_idx =None, 
     sample_size = None,
     data_save_path = None,
+    mode_pred_states = None, # states used for mode classification
+    model = None,
+    guess_idx=0,
 ):
     """
     Helper function to playback a single trajectory using the simulator environment.
@@ -144,23 +162,11 @@ def playback_trajectory_with_env(
     # plot the original ee positions as a reference
     ic_list = []
     if action_playback:
-        # env.reset() # load the initial state (it will close the simulation window and re-open it)
-        # env.reset_to(initial_state)        
-        # env.reset_to({"states": states[0]})
-        
-        # get the orignal sequence of ee positions by playing back joint states
-        # ee_pos_orig = []
-        # for i in range(len(states)):
-        #     if i in sampled_idx:
-        #         env.reset_to({"states" : states[i]})
-        #         ee_pos = env.env._get_observations(force_update=True)["robot0_eef_pos"]
-        #         ee_pos_orig.append(ee_pos)        
         for i, ee_pos in enumerate(orig_pos):
             if i in sampled_idx:
                 in_demo_idx = np.where(sampled_idx == i)[0][0]
                 ic_idx = demo_idx * sample_size + in_demo_idx
                 env.env.set_indicator_pos("site{}".format(ic_idx), ee_pos)
-                # print("setting indiciator sites{}".format(ic_idx))
                 ic_list.append("site{}".format(ic_idx))
                 # env.env.sim.forward()
         env.reset_to({"states": states[0]})
@@ -169,7 +175,17 @@ def playback_trajectory_with_env(
     keys = list(env.env.observation_spec().keys())
     keys.append('states')
     dict_of_arrays = {key: [] for key in keys}
-    # from IPython import embed; embed()
+
+    mode_pred_states = torch.tensor(mode_pred_states, dtype=torch.float32).unsqueeze(0)
+    traj_len = mode_pred_states.shape[1]
+    with torch.no_grad():
+        mode, mode_log = model.net.pred_mode(mode_pred_states.cuda())
+    mode = mode.reshape(-1, traj_len, model.net.num_guess, model.net.num_modes)[:, :, guess_idx, :]
+    color_matrix = torch.tensor(mode_colors)[:model.net.num_modes, :]
+    mode = torch.matmul(mode, color_matrix.cuda())
+    mode = torch.clamp(mode, min=0, max=1)
+    mode = mode.detach().cpu().numpy()[0] # indexing to remove batch dim
+
     # render the simulation
     for i in range(len(states)):
         if not action_playback:
@@ -209,7 +225,10 @@ def playback_trajectory_with_env(
             if video_count % video_skip == 0:
                 video_img = []
                 for cam_name in camera_names:
-                    video_img.append(env.render(mode="rgb_array", height=512, width=512, camera_name=cam_name))
+                    orig_img = env.render(mode="rgb_array", height=512, width=512, camera_name=cam_name)
+                    boundary_color = mode[i] * 255
+                    orig_img[:20, :] = boundary_color
+                    video_img.append(orig_img)
                 video_img = np.concatenate(video_img, axis=1) # concatenate horizontally
                 video_writer.append_data(video_img)
             video_count += 1
@@ -391,12 +410,17 @@ def playback_dataset(args):
         env.env = VisualizationWrapper(env.env, indicator_configs=ic)
         env.env.reset()
         env.env.set_visualization_setting('grippers', True)
+        from IPython import embed; embed()
 
+    # load trained up model
+    eva = eval.Evaluator('yanweiw/robosuite/o4vfobq9')
+    eva.load_model(epoch_num=99000, root_dir='/home/felixw/mode_learning/weights')      
+
+    # loop to visualize each trajectory
     for ind in range(len(demos)):
         ep = demos[ind]
         print("Playing back episode: {}".format(ep))
 
-        orig_pos = None
         data_save_path = None
         if args.gen_data_dir is not None:
             data_save_path = os.path.join(args.gen_data_dir, ep)
@@ -418,6 +442,10 @@ def playback_dataset(args):
 
         # if is_robosuite_env:
         #     initial_state["model"] = f["data/{}".format(ep)].attrs["model_file"]
+        orig_pos = f["data/{}/robot0_eef_pos".format(ep)][()] # [()] turn h5py dataset into numpy array
+        gripper = f["data/{}/robot0_gripper_qpos".format(ep)][()] 
+        can_pos = f["data/{}/Can_pos".format(ep)][()]
+        mode_pred_states = np.hstack((orig_pos, gripper, can_pos))
 
         # supply actions if using open-loop action playback
         actions = None
@@ -425,7 +453,7 @@ def playback_dataset(args):
             actions = f["data/{}/actions".format(ep)][()]
 
             # supply eef pos
-            orig_pos = f["data/{}/obs/robot0_eef_pos".format(ep)][()] # [()] turn h5py dataset into numpy array
+            # orig_pos = f["data/{}/obs/robot0_eef_pos".format(ep)][()] # [()] turn h5py dataset into numpy array
             eef_pos = perturb_traj(orig_pos, pert_range=0.2)
             # supply eef quat 
             eef_quat = f["data/{}/obs/robot0_eef_quat".format(ep)][()]
@@ -447,6 +475,8 @@ def playback_dataset(args):
             demo_idx=ind,
             sample_size=sample_size,
             data_save_path=data_save_path,
+            mode_pred_states=mode_pred_states,
+            model=eva,
         )
 
         # from IPython import embed; embed()
