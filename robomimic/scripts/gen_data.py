@@ -50,20 +50,22 @@ def gather_demonstrations_as_hdf5(directory, out_dir, env_info=None):
         data = np.load(data_path, allow_pickle=True)
         # from IPython import embed; embed()
         if data['success']:
-            ep_succ_grp = grp_s.create_group("demo_{}".format(num_succ_eps))
+            tag = str(num_succ_eps).zfill(6)
+            ep_succ_grp = grp_s.create_group("demo_{}".format(tag))
             for key in data.files:
                 assert key != "env_args"
                 ep_succ_grp.create_dataset(key, data=data[key])
                  
-            print("Number {}th successful demo has been saved".format(num_succ_eps))
+            print("Number {}th successful demo has been saved".format(tag))
             num_succ_eps += 1
         else:
-            ep_fail_grp = grp_f.create_group("demo_{}".format(num_fail_eps))
+            tag = str(num_fail_eps).zfill(6)
+            ep_fail_grp = grp_f.create_group("demo_{}".format(tag))
             for key in data.files:
                 assert key != "env_args"
                 ep_fail_grp.create_dataset(key, data=data[key])
 
-            print("Number {}th failing trajectory has been saved".format(num_fail_eps))
+            print("Number {}th failing trajectory has been saved".format(tag))
             num_fail_eps += 1
 
     with open(os.path.join(directory, ep_directory, 'env_args.txt'), "r") as f:
