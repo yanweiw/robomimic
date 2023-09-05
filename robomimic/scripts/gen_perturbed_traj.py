@@ -345,7 +345,7 @@ def playback_dataset(args):
 
         # supply eef pos
         orig_pos = f["data/{}/obs/robot0_eef_pos".format(ep)][()] # [()] turn h5py dataset into numpy array
-        eef_pos = perturb_traj(orig_pos, pert_range=0.2)
+        eef_pos = perturb_traj(orig_pos, pert_range=args.pert_range)
         # supply eef quat 
         eef_quat = f["data/{}/obs/robot0_eef_quat".format(ep)][()]
         # actions = np.hstack((eef_pos, eef_quat, actions[:, [-1]])) # append gripper action
@@ -451,6 +451,14 @@ if __name__ == "__main__":
         "--first",
         action='store_true',
         help="use first frame of each episode",
+    )
+
+    # perturbation range
+    parser.add_argument(
+        "--pert_range",
+        type=float,
+        default=0.2,
+        help="perturbation range",
     )
 
     args = parser.parse_args()

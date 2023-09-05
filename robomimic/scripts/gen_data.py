@@ -31,8 +31,8 @@ def gather_demonstrations_as_hdf5(directory, out_dir, env_info=None):
             including controller and robot info
     """
 
-    hdf5_succ_path = os.path.join(out_dir, "can_succ.hdf5")
-    hdf5_fail_path = os.path.join(out_dir, "can_fail.hdf5")
+    hdf5_succ_path = os.path.join(out_dir, "succ_" + args.save_name +".hdf5")
+    hdf5_fail_path = os.path.join(out_dir, "fail_" + args.save_name +".hdf5")
     fs = h5py.File(hdf5_succ_path, "w")
     ff = h5py.File(hdf5_fail_path, "w")
 
@@ -139,6 +139,12 @@ if __name__ == "__main__":
         "--out_dir",
         type=str,
         help="path to hdf5 dataset to be saved",
+    )
+
+    parser.add_argument(
+        "--save_name",
+        type=str,
+        help="name of the saved hdf5 dataset",
     )
         
     args = parser.parse_args()
