@@ -103,7 +103,7 @@ def playback_trajectory_with_env(
     first=False,
     demo_idx =None, 
     sample_size = None,
-    data_save_path = None,
+    log_data = False,
 ):
     """
     Helper function to playback a single trajectory using the simulator environment.
@@ -160,6 +160,7 @@ def playback_trajectory_with_env(
     # accumulate data for each step
     keys = list(env.env.observation_spec().keys())
     keys.append('states')
+    keys.append('actions')
     dict_of_arrays = {key: [] for key in keys}
     # render the simulation
     for i in range(len(states)):
@@ -167,9 +168,10 @@ def playback_trajectory_with_env(
             env.reset_to({"states" : states[i]})
         else:
             env.step(actions[i])
-            if data_save_path is not None:
+            if log_data:
                 # save the data for each step
                 dict_of_arrays['states'].append(env.get_state()["states"])
+                dict_of_arrays['actions'].append(actions[i])
                 obs = env.env.observation_spec()
                 for key in obs.keys():
                     dict_of_arrays[key].append(obs[key])
@@ -207,34 +209,49 @@ def playback_trajectory_with_env(
         for ic in ic_list:
             env.env.set_indicator_pos(ic, [0, 0, 0])
 
-    if data_save_path is not None:
+    if log_data is not None:
         dict_of_arrays = {key: np.vstack(dict_of_arrays[key]) for key in dict_of_arrays.keys()}
         return dict_of_arrays, env.get_reward()
     else:
         return None, None
 
 
-def perturb_traj(orig, pert_range=0.1):
-    # orig actions (traj_len, 7), this is perturbation in the joint space
-    assert len(orig) > 10
-    impulse_start = random.randint(0, len(orig)-10)
-    impulse_end = random.randint(impulse_start+8, len(orig)-1)
-    impulse_mean = (impulse_start + impulse_end)//2
-    impulse_mean_action = orig[impulse_mean]
-    impulse_targets = []
-    for curr in impulse_mean_action:
-        target = random.uniform(curr-pert_range, curr+pert_range)
-        # if target < -1: target = -1
-        # if target > 1: target = 1
-        impulse_targets.append(target)
-    # impulse_target_x = random.uniform(-8, 8)
-    # impulse_target_y = random.uniform(-8, 8)
-    max_relative_dist = 5 # np.exp(-5) ~= 0.006
+def perturb_traj(actions, pert_range=0.1, perturb_grasp=False):
+    # orig actions (traj_len, 3)
+    assert actions.shape[1] == 4
+    orig_ee = actions[:, :-1]
+    gripper_pos = actions[:, [-1]]
+    min_perturb_len = 20
+    assert len(actions) > min_perturb_len
+    perturbed_ee = orig_ee.copy()
+    if not perturb_grasp: 
+        impulse_start = random.randint(0, len(orig_ee)-1-min_perturb_len)
+        impulse_end = random.randint(impulse_start+min_perturb_len, len(orig_ee)-1)
+        impulse_mean = (impulse_start + impulse_end)//2
+        impulse_mean_action = orig_ee[impulse_mean]
+        impulse_targets = []
+        for curr in impulse_mean_action: # 3d for ee_pos
+            target = random.uniform(curr-pert_range, curr+pert_range)
+            # if target < -1: target = -1
+            # if target > 1: target = 1
+            impulse_targets.append(target)
+        # impulse_target_x = random.uniform(-8, 8)
+        # impulse_target_y = random.uniform(-8, 8)
+        max_relative_dist = 5 # np.exp(-5) ~= 0.006
 
-    kernel = np.exp(-max_relative_dist*(np.array(range(len(orig))) - impulse_mean)**2 / ((impulse_start-impulse_mean)**2))
-    perturbed = orig.copy()
-    for i in range(orig.shape[1]):
-        perturbed[:, i] += (impulse_targets[i]-perturbed[:, i])*kernel
+        kernel = np.exp(-max_relative_dist * (np.array(range(len(orig_ee))) - impulse_mean)**2 / ((impulse_start-impulse_mean)**2))
+        for i in range(orig_ee.shape[1]):
+            perturbed_ee[:, i] += (impulse_targets[i] - perturbed_ee[:, i]) * kernel
+
+    # appending gripper actions
+    perturbed_gripper = gripper_pos.copy()
+    if perturb_grasp: 
+        max_gripper_pertrub_len = min_perturb_len 
+        gripper_perturb_len = random.randint(5, max_gripper_pertrub_len)
+        gripper_perturb_start = random.randint(0, len(perturbed_gripper)-5-gripper_perturb_len)
+        perturbed_gripper[gripper_perturb_start:gripper_perturb_start+gripper_perturb_len] *= -1 # flip gripper actions; -1 is open and 1 is close
+
+    perturbed = np.hstack((perturbed_ee, perturbed_gripper)) # append gripper action
 
     return perturbed
 
@@ -327,14 +344,8 @@ def playback_dataset(args):
     env.env.set_visualization_setting('grippers', True)
 
     for ind, ep in enumerate(demos):
-        print("Playing back episode: {}".format(ep))
-
-        orig_pos = None
-        data_save_path = None
-        if args.gen_data_dir is not None:
-            # ep is of format 'demo_0', 'demo_1', etc. Let's pad the number with zeros
-            data_save_path = os.path.join(args.gen_data_dir, str(ind).zfill(6))
-            os.makedirs(data_save_path, exist_ok=True)        
+        # ep is of format 'demo_0', 'demo_1', etc. Let's pad the number with zeros
+        print("Playing back episode: {}".format(ep))      
 
         # prepare initial state to reload from
         states = f["data/{}/states".format(ep)][()]
@@ -344,18 +355,19 @@ def playback_dataset(args):
         actions = f["data/{}/actions".format(ep)][()]
 
         # supply eef pos
-        orig_pos = f["data/{}/obs/robot0_eef_pos".format(ep)][()] # [()] turn h5py dataset into numpy array
-        eef_pos = perturb_traj(orig_pos, pert_range=args.pert_range)
+        orig_ee_pos = f["data/{}/obs/robot0_eef_pos".format(ep)][()] # [()] turn h5py dataset into numpy array
+        gripper_pos = actions[:, [-1]]
+        actions = np.hstack((orig_ee_pos, gripper_pos)) # append gripper action
+        actions = perturb_traj(actions, pert_range=args.pert_range, perturb_grasp=False)
         # supply eef quat 
-        eef_quat = f["data/{}/obs/robot0_eef_quat".format(ep)][()]
+        # eef_quat = f["data/{}/obs/robot0_eef_quat".format(ep)][()]
         # actions = np.hstack((eef_pos, eef_quat, actions[:, [-1]])) # append gripper action
-        actions = np.hstack((eef_pos, actions[:, [-1]])) # append gripper action
 
 
         dict_of_obs, success = playback_trajectory_with_env(
             env=env, 
             initial_state=initial_state, 
-            states=states, orig_pos=orig_pos, actions=actions, 
+            states=states, orig_pos=orig_ee_pos, actions=actions, 
             render=args.render, 
             video_writer=video_writer, 
             video_skip=args.video_skip,
@@ -363,16 +375,47 @@ def playback_dataset(args):
             first=args.first,
             demo_idx=ind,
             sample_size=sample_size,
-            data_save_path=data_save_path,
+            log_data=True,
         )
 
         if args.gen_data_dir is not None:
+            if success:
+                data_save_path = os.path.join(args.gen_data_dir, str(ind).zfill(6) + '_0_succ')
+            else:
+                data_save_path = os.path.join(args.gen_data_dir, str(ind).zfill(6) + '_0_fail')
+            os.makedirs(data_save_path, exist_ok=True)              
             dict_of_obs['success'] = success
-            # dict_of_obs['env_args'] = f['data'].attrs['env_args']
             with open(os.path.join(data_save_path, "env_args.txt"), "w") as outfile:
-                outfile.write(f['data'].attrs['env_args'])
-        
+                outfile.write(f['data'].attrs['env_args'])        
             np.savez(os.path.join(data_save_path, 'obs.npz'), **dict_of_obs)
+
+        if success: # perturb grasp
+            for pert_attempt in range(1):
+                new_actions = perturb_traj(actions, pert_range=args.pert_range, perturb_grasp=True)
+                dict_of_obs, success = playback_trajectory_with_env(
+                    env=env, 
+                    initial_state=initial_state, 
+                    states=states, orig_pos=orig_ee_pos, actions=new_actions, 
+                    render=args.render, 
+                    video_writer=video_writer, 
+                    video_skip=args.video_skip,
+                    camera_names=args.render_image_names,
+                    first=args.first,
+                    demo_idx=ind,
+                    sample_size=sample_size,
+                    log_data=True,
+                )
+                
+                if args.gen_data_dir is not None:
+                    if success:
+                        data_save_path = os.path.join(args.gen_data_dir, str(ind).zfill(6) + '_' + str(pert_attempt+1) + '_succ')
+                    else:
+                        data_save_path = os.path.join(args.gen_data_dir, str(ind).zfill(6) + '_' + str(pert_attempt+1) + '_fail')
+                    os.makedirs(data_save_path, exist_ok=True)  
+                    dict_of_obs['success'] = success
+                    with open(os.path.join(data_save_path, "env_args.txt"), "w") as outfile:
+                        outfile.write(f['data'].attrs['env_args'])
+                    np.savez(os.path.join(data_save_path, 'obs.npz'), **dict_of_obs)
 
     f.close()
     if write_video:

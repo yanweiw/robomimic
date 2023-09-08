@@ -31,14 +31,17 @@ def gather_demonstrations_as_hdf5(directory, out_dir, env_info=None):
             including controller and robot info
     """
 
-    hdf5_succ_path = os.path.join(out_dir, "succ_" + args.save_name +".hdf5")
-    hdf5_fail_path = os.path.join(out_dir, "fail_" + args.save_name +".hdf5")
-    fs = h5py.File(hdf5_succ_path, "w")
-    ff = h5py.File(hdf5_fail_path, "w")
+    # hdf5_succ_path = os.path.join(out_dir, "succ_" + args.save_name +".hdf5")
+    # hdf5_fail_path = os.path.join(out_dir, "fail_" + args.save_name +".hdf5")
+    # fs = h5py.File(hdf5_succ_path, "w")
+    # ff = h5py.File(hdf5_fail_path, "w")
+    hdf5_path = os.path.join(out_dir, args.save_name +".hdf5")
+    f = h5py.File(hdf5_path, "w")
 
     # store some metadata in the attributes of one group
-    grp_s = fs.create_group("data")
-    grp_f = ff.create_group("data")
+    # grp_s = fs.create_group("data")
+    # grp_f = ff.create_group("data")
+    grp = f.create_group("data")
 
     num_succ_eps = 0
     num_fail_eps = 0
@@ -48,33 +51,47 @@ def gather_demonstrations_as_hdf5(directory, out_dir, env_info=None):
 
         data_path = os.path.join(directory, ep_directory, "obs.npz")
         data = np.load(data_path, allow_pickle=True)
-        # from IPython import embed; embed()
+        ep_grp = grp.create_group(ep_directory)
+        for key in data.files:
+            assert key != "env_args"
+            ep_grp.create_dataset(key, data=data[key])
         if data['success']:
-            tag = str(num_succ_eps).zfill(6)
-            ep_succ_grp = grp_s.create_group("demo_{}".format(tag))
-            for key in data.files:
-                assert key != "env_args"
-                ep_succ_grp.create_dataset(key, data=data[key])
-                 
-            print("Number {}th successful demo has been saved".format(tag))
+            print("Number {}th successful trajectory has been saved".format(num_succ_eps))
             num_succ_eps += 1
         else:
-            tag = str(num_fail_eps).zfill(6)
-            ep_fail_grp = grp_f.create_group("demo_{}".format(tag))
-            for key in data.files:
-                assert key != "env_args"
-                ep_fail_grp.create_dataset(key, data=data[key])
-
-            print("Number {}th failing trajectory has been saved".format(tag))
+            print("Number {}th failing trajectory has been saved".format(num_fail_eps))
             num_fail_eps += 1
 
-    with open(os.path.join(directory, ep_directory, 'env_args.txt'), "r") as f:
-        env_args = f.read()
-    grp_s.attrs['env_args'] = env_args       
+        # if data['success']:
+        #     # tag = str(num_succ_eps).zfill(6)
+        #     ep_succ_grp = grp_s.create_group(ep_directory)
+        #     for key in data.files:
+        #         assert key != "env_args"
+        #         ep_succ_grp.create_dataset(key, data=data[key])
+                 
+        #     print("Number {}th successful demo has been saved".format(num_succ_eps))
+        #     num_succ_eps += 1
+        # else:
+        #     # tag = str(num_fail_eps).zfill(6)
+        #     ep_fail_grp = grp_f.create_group(ep_directory)
+        #     for key in data.files:
+        #         assert key != "env_args"
+        #         ep_fail_grp.create_dataset(key, data=data[key])
 
-    with open(os.path.join(directory, ep_directory, 'env_args.txt'), "r") as f:
-        env_args = f.read()
-    grp_f.attrs['env_args'] = env_args                     
+        #     print("Number {}th failing trajectory has been saved".format(num_fail_eps))
+        #     num_fail_eps += 1
+
+    with open(os.path.join(directory, ep_directory, 'env_args.txt'), "r") as file:
+        env_args = file.read()
+    grp.attrs['env_args'] = env_args
+
+    # with open(os.path.join(directory, ep_directory, 'env_args.txt'), "r") as f:
+    #     env_args = f.read()
+    # grp_s.attrs['env_args'] = env_args       
+
+    # with open(os.path.join(directory, ep_directory, 'env_args.txt'), "r") as f:
+    #     env_args = f.read()
+    # grp_f.attrs['env_args'] = env_args                     
             
         # states = []
         # actions = []
@@ -124,8 +141,9 @@ def gather_demonstrations_as_hdf5(directory, out_dir, env_info=None):
     # grp.attrs["env"] = env_name
     # grp.attrs["env_info"] = env_info
 
-    fs.close()
-    ff.close()
+    # fs.close()
+    # ff.close()
+    f.close()
 
 
 if __name__ == "__main__":

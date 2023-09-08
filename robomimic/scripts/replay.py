@@ -342,12 +342,17 @@ def playback_dataset(args):
         demos = [elem.decode("utf-8") for elem in np.array(f["mask/{}".format(args.filter_key)])]
     else:
         demos = list(f["data"].keys())
-    inds = np.argsort([int(elem[5:]) for elem in demos])
-    demos = [demos[i] for i in inds]
+
+    # inds = np.argsort([int(elem[5:]) for elem in demos])
+    # demos = [demos[i] for i in inds]
 
     # maybe reduce the number of demonstrations to playback
     if args.n is not None:
-        demos = demos[:args.n]
+        demos = demos[args.n:(args.n+30)]
+    elif args.demo is not None:
+        demos = [d for d in demos if args.demo in d]
+        if len(demos) == 1:
+            demos = [demos[0]] * 3 # repeat the demo 3 times
 
     # maybe dump video
     video_writer = None
@@ -392,6 +397,7 @@ def playback_dataset(args):
         env.env.reset()
         env.env.set_visualization_setting('grippers', True)
 
+    orig_actions = f["data/{}/actions".format(demos[0])][()]
     for ind in range(len(demos)):
         ep = demos[ind]
         print("Playing back episode: {}".format(ep))
@@ -416,8 +422,9 @@ def playback_dataset(args):
         states = f["data/{}/states".format(ep)][()]
         initial_state = dict(states=states[0])
 
-        # if is_robosuite_env:
-        #     initial_state["model"] = f["data/{}".format(ep)].attrs["model_file"]
+        # print gripper actions to debug whether the gripper perturbation is significant
+        actions = f["data/{}/actions".format(ep)][()]
+        print(actions[:, -1] == orig_actions[:, -1])
 
         # supply actions if using open-loop action playback
         actions = None
@@ -433,8 +440,6 @@ def playback_dataset(args):
             actions = np.hstack((eef_pos, actions[:, [-1]])) # append gripper action
 
 
-        # from IPython import embed; embed()
-
         dict_of_obs, success = playback_trajectory_with_env(
             env=env, 
             initial_state=initial_state, 
@@ -448,15 +453,6 @@ def playback_dataset(args):
             sample_size=sample_size,
             data_save_path=data_save_path,
         )
-
-        # from IPython import embed; embed()
-        if args.gen_data_dir is not None:
-            dict_of_obs['success'] = success
-            # dict_of_obs['env_args'] = f['data'].attrs['env_args']
-            with open(os.path.join(data_save_path, "env_args.txt"), "w") as outfile:
-                outfile.write(f['data'].attrs['env_args'])
-        
-            np.savez(os.path.join(data_save_path, 'obs.npz'), **dict_of_obs)
 
     f.close()
     if write_video:
@@ -549,6 +545,14 @@ if __name__ == "__main__":
         "--first",
         action='store_true',
         help="use first frame of each episode",
+    )
+
+    # Replay a particular demonstration
+    parser.add_argument(
+        "--demo",
+        type=str,
+        default=None,
+        help="(optional) replay a particular demonstration",
     )
 
     args = parser.parse_args()
