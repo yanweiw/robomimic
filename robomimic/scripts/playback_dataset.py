@@ -287,6 +287,45 @@ def perturb_traj(orig, pert_range=0.1):
 
     return perturbed
 
+def perturb_traj_new(actions, pert_range=0.1, perturb_grasp=False):
+    # orig actions (traj_len, 3)
+    assert actions.shape[1] == 4
+    orig_ee = actions[:, :-1]
+    gripper_pos = actions[:, [-1]]
+    min_perturb_len = 20
+    assert len(actions) > min_perturb_len
+    perturbed_ee = orig_ee.copy()
+    if not perturb_grasp: 
+        impulse_start = random.randint(0, len(orig_ee)-1-min_perturb_len)
+        impulse_end = random.randint(impulse_start+min_perturb_len, len(orig_ee)-1)
+        impulse_mean = (impulse_start + impulse_end)//2
+        impulse_mean_action = orig_ee[impulse_mean]
+        impulse_targets = []
+        for curr in impulse_mean_action: # 3d for ee_pos
+            target = random.uniform(curr-pert_range, curr+pert_range)
+            # if target < -1: target = -1
+            # if target > 1: target = 1
+            impulse_targets.append(target)
+        # impulse_target_x = random.uniform(-8, 8)
+        # impulse_target_y = random.uniform(-8, 8)
+        max_relative_dist = 5 # np.exp(-5) ~= 0.006
+
+        kernel = np.exp(-max_relative_dist * (np.array(range(len(orig_ee))) - impulse_mean)**2 / ((impulse_start-impulse_mean)**2))
+        for i in range(orig_ee.shape[1]):
+            perturbed_ee[:, i] += (impulse_targets[i] - perturbed_ee[:, i]) * kernel
+
+    # appending gripper actions
+    perturbed_gripper = gripper_pos.copy()
+    if perturb_grasp: 
+        max_gripper_pertrub_len = min_perturb_len 
+        gripper_perturb_len = random.randint(5, max_gripper_pertrub_len)
+        gripper_perturb_start = random.randint(0, len(perturbed_gripper)-5-gripper_perturb_len)
+        perturbed_gripper[gripper_perturb_start:gripper_perturb_start+gripper_perturb_len] *= -1 # flip gripper actions; -1 is open and 1 is close
+
+    perturbed = np.hstack((perturbed_ee, perturbed_gripper)) # append gripper action
+
+    return perturbed
+
 
 def playback_dataset(args):
     # some arg checking
@@ -347,7 +386,7 @@ def playback_dataset(args):
 
     # maybe reduce the number of demonstrations to playback
     if args.n is not None:
-        demos = demos[:args.n]
+        demos = demos[args.n:args.n+20]
 
     # maybe dump video
     video_writer = None

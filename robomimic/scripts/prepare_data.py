@@ -40,8 +40,14 @@ if __name__  == "__main__":
     #     type=str,
     #     help="path to hdf5 dataset to be saved",
     # )
+    parser.add_argument(
+        "--n",
+        type=int,
+        default=200,
+        help="number of trajectories",
+    )
     args = parser.parse_args()
 
     succ_states, fail_states = prepare_data_can(args.datapath, args.filename)
-    np.save(os.path.join(args.datapath, args.filename + '_succ.npy'), succ_states)
-    np.save(os.path.join(args.datapath, args.filename + '_fail.npy'), fail_states)
+    np.save(os.path.join(args.datapath, args.filename + '_succ.npy'), succ_states[:args.n])
+    np.save(os.path.join(args.datapath, args.filename + '_fail.npy'), fail_states[:args.n])
