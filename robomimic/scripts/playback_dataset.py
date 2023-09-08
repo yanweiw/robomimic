@@ -209,14 +209,15 @@ def playback_trajectory_with_env(
 
         if i in sampled_idx:
             in_demo_idx = np.where(sampled_idx == i)[0][0]
-            ic_idx = demo_idx * sample_size + in_demo_idx
+            ic_idx = in_demo_idx # demo_idx * sample_size + in_demo_idx
             if action_playback:
                 ic_idx += sample_size//2
             # env.env.set_indicator_pos("site{}".format(ic_idx), env.env._get_observations(force_update=True)["robot0_eef_pos"])
             
             env.env.set_indicator_pos("mode_{}_{}".format(mode_idx[i], ic_idx), env.env._get_observations(force_update=True)["robot0_eef_pos"])
             # print("setting indiciator sites{}".format(ic_idx))
-            ic_list.append("site{}".format(ic_idx))
+            # ic_list.append("site{}".format(ic_idx))
+            ic_list.append("mode_{}_{}".format(mode_idx[i], ic_idx))
             # env.env.sim.forward()
 
         # on-screen render
@@ -240,11 +241,10 @@ def playback_trajectory_with_env(
         if first:
             break
 
-    # from IPython import embed; embed()
     # remove the indicator sites to reduce clutter
-    if action_playback:
-        for ic in ic_list:
-            env.env.set_indicator_pos(ic, [0, 0, 0])
+    # if action_playback:
+    for ic in ic_list:
+        env.env.set_indicator_pos(ic, [0, 0, 0])
 
     if data_save_path is not None:
         dict_of_arrays = {key: np.vstack(dict_of_arrays[key]) for key in dict_of_arrays.keys()}
@@ -384,7 +384,7 @@ def playback_dataset(args):
             sample_size = sample_size * 2
 
         ic = []
-        for i in range(len(demos)):
+        for i in range(1): #range(len(demos)):
             for mode_idx, color in enumerate(mode_colors):
                 rgba = color + [0.5]
                 ic += [
