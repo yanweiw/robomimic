@@ -255,6 +255,28 @@ def perturb_traj(actions, pert_range=0.1, perturb_grasp=False):
 
     return perturbed
 
+def pulse_train(actions, pert_mag=0.1):
+    # orig actions (traj_len, 3)
+    assert actions.shape[1] == 4
+    perturb_len = 10
+    assert len(actions) > perturb_len * 3
+    max_relative_dist = 5 # np.exp(-5) ~= 0.006
+    perturbed_actions_list = []
+    for impulse_start in np.linspace(perturb_len, len(actions)-2*perturb_len, 5, dtype=int):
+        impulse_mean = impulse_start + perturb_len//2
+        kernel = np.exp(-max_relative_dist * (np.array(range(len(actions))) - impulse_mean)**2 / ((impulse_start-impulse_mean)**2))
+        for dim in range(actions.shape[1]-1):
+            for sign in [1, -1]:
+                perturbed_actions = actions.copy()
+                perturbed_actions[:, dim] += sign * pert_mag * kernel
+                perturbed_actions_list.append(perturbed_actions)
+        # adding gripper perturbations
+        perturbed_actions = actions.copy()
+        perturbed_actions[impulse_start:impulse_start+perturb_len, -1] *= -1
+        perturbed_actions_list.append(perturbed_actions)
+
+    return perturbed_actions_list
+
 
 def playback_dataset(args):
 
@@ -358,64 +380,62 @@ def playback_dataset(args):
         orig_ee_pos = f["data/{}/obs/robot0_eef_pos".format(ep)][()] # [()] turn h5py dataset into numpy array
         gripper_pos = actions[:, [-1]]
         actions = np.hstack((orig_ee_pos, gripper_pos)) # append gripper action
-        actions = perturb_traj(actions, pert_range=args.pert_range, perturb_grasp=False)
-        # supply eef quat 
-        # eef_quat = f["data/{}/obs/robot0_eef_quat".format(ep)][()]
-        # actions = np.hstack((eef_pos, eef_quat, actions[:, [-1]])) # append gripper action
+        # actions = perturb_traj(actions, pert_range=args.pert_range, perturb_grasp=False)
+        perturbed_actions_list = pulse_train(actions, pert_mag=args.pert_range)
 
+        for pert_idx, perturbed_actions in enumerate(perturbed_actions_list):
+            dict_of_obs, success = playback_trajectory_with_env(
+                env=env, 
+                initial_state=initial_state, 
+                states=states, orig_pos=orig_ee_pos, actions=perturbed_actions, 
+                render=args.render, 
+                video_writer=video_writer, 
+                video_skip=args.video_skip,
+                camera_names=args.render_image_names,
+                first=args.first,
+                demo_idx=ind,
+                sample_size=sample_size,
+                log_data=True,
+            )
 
-        dict_of_obs, success = playback_trajectory_with_env(
-            env=env, 
-            initial_state=initial_state, 
-            states=states, orig_pos=orig_ee_pos, actions=actions, 
-            render=args.render, 
-            video_writer=video_writer, 
-            video_skip=args.video_skip,
-            camera_names=args.render_image_names,
-            first=args.first,
-            demo_idx=ind,
-            sample_size=sample_size,
-            log_data=True,
-        )
+            if args.gen_data_dir is not None:
+                if success:
+                    data_save_path = os.path.join(args.gen_data_dir, str(ind).zfill(6) + '_' + str(pert_idx).zfill(2) + '_succ')
+                else:
+                    data_save_path = os.path.join(args.gen_data_dir, str(ind).zfill(6) + '_' + str(pert_idx).zfill(2) + '_fail')
+                os.makedirs(data_save_path, exist_ok=True)              
+                dict_of_obs['success'] = success
+                with open(os.path.join(data_save_path, "env_args.txt"), "w") as outfile:
+                    outfile.write(f['data'].attrs['env_args'])        
+                np.savez(os.path.join(data_save_path, 'obs.npz'), **dict_of_obs)
 
-        if args.gen_data_dir is not None:
-            if success:
-                data_save_path = os.path.join(args.gen_data_dir, str(ind).zfill(6) + '_0_succ')
-            else:
-                data_save_path = os.path.join(args.gen_data_dir, str(ind).zfill(6) + '_0_fail')
-            os.makedirs(data_save_path, exist_ok=True)              
-            dict_of_obs['success'] = success
-            with open(os.path.join(data_save_path, "env_args.txt"), "w") as outfile:
-                outfile.write(f['data'].attrs['env_args'])        
-            np.savez(os.path.join(data_save_path, 'obs.npz'), **dict_of_obs)
-
-        if success: # perturb grasp
-            for pert_attempt in range(1):
-                new_actions = perturb_traj(actions, pert_range=args.pert_range, perturb_grasp=True)
-                dict_of_obs, success = playback_trajectory_with_env(
-                    env=env, 
-                    initial_state=initial_state, 
-                    states=states, orig_pos=orig_ee_pos, actions=new_actions, 
-                    render=args.render, 
-                    video_writer=video_writer, 
-                    video_skip=args.video_skip,
-                    camera_names=args.render_image_names,
-                    first=args.first,
-                    demo_idx=ind,
-                    sample_size=sample_size,
-                    log_data=True,
-                )
+        # if success: # perturb grasp
+        #     for pert_attempt in range(1):
+        #         new_actions = perturb_traj(actions, pert_range=args.pert_range, perturb_grasp=True)
+        #         dict_of_obs, success = playback_trajectory_with_env(
+        #             env=env, 
+        #             initial_state=initial_state, 
+        #             states=states, orig_pos=orig_ee_pos, actions=new_actions, 
+        #             render=args.render, 
+        #             video_writer=video_writer, 
+        #             video_skip=args.video_skip,
+        #             camera_names=args.render_image_names,
+        #             first=args.first,
+        #             demo_idx=ind,
+        #             sample_size=sample_size,
+        #             log_data=True,
+        #         )
                 
-                if args.gen_data_dir is not None:
-                    if success:
-                        data_save_path = os.path.join(args.gen_data_dir, str(ind).zfill(6) + '_' + str(pert_attempt+1) + '_succ')
-                    else:
-                        data_save_path = os.path.join(args.gen_data_dir, str(ind).zfill(6) + '_' + str(pert_attempt+1) + '_fail')
-                    os.makedirs(data_save_path, exist_ok=True)  
-                    dict_of_obs['success'] = success
-                    with open(os.path.join(data_save_path, "env_args.txt"), "w") as outfile:
-                        outfile.write(f['data'].attrs['env_args'])
-                    np.savez(os.path.join(data_save_path, 'obs.npz'), **dict_of_obs)
+        #         if args.gen_data_dir is not None:
+        #             if success:
+        #                 data_save_path = os.path.join(args.gen_data_dir, str(ind).zfill(6) + '_' + str(pert_attempt+1) + '_succ')
+        #             else:
+        #                 data_save_path = os.path.join(args.gen_data_dir, str(ind).zfill(6) + '_' + str(pert_attempt+1) + '_fail')
+        #             os.makedirs(data_save_path, exist_ok=True)  
+        #             dict_of_obs['success'] = success
+        #             with open(os.path.join(data_save_path, "env_args.txt"), "w") as outfile:
+        #                 outfile.write(f['data'].attrs['env_args'])
+        #             np.savez(os.path.join(data_save_path, 'obs.npz'), **dict_of_obs)
 
     f.close()
     if write_video:
