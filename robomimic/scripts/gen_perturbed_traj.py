@@ -262,21 +262,21 @@ def pulse_train(actions, pert_mag=0.1):
     assert len(actions) > perturb_len * 3
     max_relative_dist = 5 # np.exp(-5) ~= 0.006
     perturbed_actions_list = []
-    for impulse_start in np.linspace(perturb_len, len(actions)-2*perturb_len, 5, dtype=int):
+    for impulse_start in np.linspace(perturb_len, len(actions)-2*perturb_len, 10, dtype=int):
         impulse_mean = impulse_start + perturb_len//2
+        random_direction = np.random.rand(3)
+        normalized_direction = random_direction / np.linalg.norm(random_direction)
+        pert_vec = normalized_direction * pert_mag
         kernel = np.exp(-max_relative_dist * (np.array(range(len(actions))) - impulse_mean)**2 / ((impulse_start-impulse_mean)**2))
-        for dim in range(actions.shape[1]-1):
-            for sign in [1, -1]:
-                perturbed_actions = actions.copy()
-                perturbed_actions[:, dim] += sign * pert_mag * kernel
-                perturbed_actions_list.append(perturbed_actions)
+        perturbed_actions = actions.copy()
+        perturbed_actions[:, :3] +=  kernel.reshape(-1, 1) * pert_vec.reshape(1, -1)
+        perturbed_actions_list.append(perturbed_actions)
         # adding gripper perturbations
         perturbed_actions = actions.copy()
         perturbed_actions[impulse_start:impulse_start+perturb_len, -1] *= -1
         perturbed_actions_list.append(perturbed_actions)
 
     return perturbed_actions_list
-
 
 def playback_dataset(args):
 

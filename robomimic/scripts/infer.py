@@ -371,7 +371,7 @@ def playback_dataset(args):
 
     # maybe reduce the number of demonstrations to playback
     if args.n is not None:
-        demos = demos[args.n:args.n+20]
+        demos = demos[args.n:args.n+60]
 
     # maybe dump video
     video_writer = None
