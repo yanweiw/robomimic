@@ -466,8 +466,9 @@ def playback_dataset(args):
         #     initial_state["model"] = f["data/{}".format(ep)].attrs["model_file"]
         orig_pos = f["data/{}/robot0_eef_pos".format(ep)][()] # [()] turn h5py dataset into numpy array
         gripper = f["data/{}/robot0_gripper_qpos".format(ep)][()] 
+        gripper_state = ((gripper[:, 0] - gripper[:, 1]) > 0.06).astype(np.float32).reshape(-1, 1)
         can_pos = f["data/{}/Can_pos".format(ep)][()]
-        mode_pred_states = np.hstack((orig_pos, gripper, can_pos))
+        mode_pred_states = np.hstack((can_pos-orig_pos, gripper, can_pos))
 
         # supply actions if using open-loop action playback
         actions = None

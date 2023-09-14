@@ -9,10 +9,11 @@ def prepare_data_can(datapath, filename, max_len=200):
     for demo in f['data'].keys():
         eef_pos = f['data'][demo]['robot0_eef_pos'][:]
         gripper = f['data'][demo]['robot0_gripper_qpos'][:]
+        gripper_state = ((gripper[:, 0] - gripper[:, 1]) > 0.06).astype(np.float32).reshape(-1, 1)
         # eef_pos = np.pad(eef_pos, ((0, max_len - len(eef_pos)), (0, 0)), 'edge')
         # eef_traj.append(eef_pos)
         can_pos = f['data'][demo]['Can_pos'][:]
-        state = np.concatenate((eef_pos, gripper, can_pos), axis=1)
+        state = np.concatenate((can_pos-eef_pos, gripper, can_pos), axis=1)
         assert len(state) < max_len
         state = np.pad(state, ((0, max_len - len(state)), (0, 0)), 'edge')
         if 'succ' in demo:
