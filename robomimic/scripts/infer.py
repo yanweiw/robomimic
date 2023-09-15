@@ -179,7 +179,7 @@ def playback_trajectory_with_env(
     mode_pred_states = torch.tensor(mode_pred_states, dtype=torch.float32).unsqueeze(0)
     traj_len = mode_pred_states.shape[1]
     with torch.no_grad():
-        mode, mode_log = model.net.pred_mode(mode_pred_states.cuda())
+        mode, mode_log, mode_logits = model.net.pred_mode(mode_pred_states.cuda())
     mode = mode.reshape(-1, traj_len, model.net.num_guess, model.net.num_modes)[:, :, guess_idx, :]
     # color_matrix = torch.tensor(mode_colors)[:model.net.num_modes, :]
     # mode = torch.matmul(mode, color_matrix.cuda())
