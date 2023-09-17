@@ -1,5 +1,11 @@
 # robomimic
 
+To run inference on trained model. `pert_01_1000` indicates perturbation magnitude is 0.1m and this dataset contains 1000 runs off the original demos (200 of them in total). `--n` shows the index of the trajectory to run inference on. Each inference run will run about 40 trajs. `--run_path` indicates the run path shown on the wandb website. For example, the following inference uses model trained from experiment `clean-totem-53` and on the website they show the corresponding run_path under overview tab. You can vary the --epoch number frmo 0-199k. Usually 99k is a good point and 199k typically overfits. You can also vary the guess_idx from 0 to 9. 
+```
+python infer.py --dataset ../../shared_runs/can/pert_01_1000.hdf5 --render_image_names agentview --video_path ../../shared_runs/can/pert_01_1000_16.mp4 --n 0 --run_path mode_learning/robosuite/ff5lyb3e --epoch 99000 --guess_idx 0 --weight_dir ../../shared_runs/weights
+```
+
+
 To visualize demo dataset
 ```
 python playback_dataset.py 

@@ -436,7 +436,7 @@ def playback_dataset(args):
     # eva = eval.Evaluator('yanweiw/robosuite/o4vfobq9')
     # eva = eval.Evaluator('yanweiw/robosuite/9oxfdli6')
     eva = eval.Evaluator(args.run_path)
-    eva.load_model(epoch_num=args.epoch, root_dir='/home/felixw/mode_learning/weights')      
+    eva.load_model(epoch_num=args.epoch, root_dir=args.weight_dir)      
 
     # loop to visualize each trajectory
     for ind in range(len(demos)):
@@ -626,6 +626,14 @@ if __name__ == "__main__":
         type=int,
         default=50000,
         help="epoch to load the model",
+    )
+
+    # weight_dir
+    parser.add_argument(
+        "--weight_dir",
+        type=str,
+        default='/home/felixw/mode_learning/weights',
+        help="path to the base weight directory",
     )
 
     args = parser.parse_args()
