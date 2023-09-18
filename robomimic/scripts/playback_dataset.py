@@ -381,8 +381,8 @@ def playback_dataset(args):
         demos = [elem.decode("utf-8") for elem in np.array(f["mask/{}".format(args.filter_key)])]
     else:
         demos = list(f["data"].keys())
-    inds = np.argsort([int(elem[5:]) for elem in demos])
-    demos = [demos[i] for i in inds]
+    # inds = np.argsort([int(elem[5:]) for elem in demos])
+    # demos = [demos[i] for i in inds]
 
     # maybe reduce the number of demonstrations to playback
     if args.n is not None:

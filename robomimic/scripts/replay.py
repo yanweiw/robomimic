@@ -401,6 +401,8 @@ def playback_dataset(args):
     for ind in range(len(demos)):
         ep = demos[ind]
         print("Playing back episode: {}".format(ep))
+        if '_0_' in ep:
+            orig_actions = f["data/{}/actions".format(ep)][()]
 
         orig_pos = None
         data_save_path = None
@@ -425,6 +427,7 @@ def playback_dataset(args):
         # print gripper actions to debug whether the gripper perturbation is significant
         actions = f["data/{}/actions".format(ep)][()]
         print(actions[:, -1] == orig_actions[:, -1])
+
 
         # supply actions if using open-loop action playback
         actions = None

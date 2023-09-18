@@ -127,3 +127,5 @@ results
 robomimic/exps/paper
 robomimic/scripts/MUJOCO_LOG.TXT
 shared_runs
+shared_runs shared_runs.zip
+shared_runs.zip
