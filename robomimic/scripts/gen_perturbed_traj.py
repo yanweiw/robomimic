@@ -410,24 +410,24 @@ def playback_dataset(args):
                 np.savez(os.path.join(data_save_path, 'obs.npz'), **dict_of_obs)
 
         if success: # perturb grasp
-            for pert_attempt in range(2):
-                while True:
-                    new_actions = perturb_traj(actions, pert_range=args.pert_range, perturb_grasp=True)
-                    dict_of_obs, success = playback_trajectory_with_env(
-                        env=env, 
-                        initial_state=initial_state, 
-                        states=states, orig_pos=orig_ee_pos, actions=new_actions, 
-                        render=args.render, 
-                        video_writer=video_writer, 
-                        video_skip=args.video_skip,
-                        camera_names=args.render_image_names,
-                        first=args.first,
-                        demo_idx=ind,
-                        sample_size=sample_size,
-                        log_data=True,
-                    )
-                    if not success:
-                        break
+            for pert_attempt in range(1):
+                # while True:
+                new_actions = perturb_traj(actions, pert_range=args.pert_range, perturb_grasp=True)
+                dict_of_obs, success = playback_trajectory_with_env(
+                    env=env, 
+                    initial_state=initial_state, 
+                    states=states, orig_pos=orig_ee_pos, actions=new_actions, 
+                    render=args.render, 
+                    video_writer=video_writer, 
+                    video_skip=args.video_skip,
+                    camera_names=args.render_image_names,
+                    first=args.first,
+                    demo_idx=ind,
+                    sample_size=sample_size,
+                    log_data=True,
+                )
+                    # if not success:
+                    #     break
                 
                 if args.gen_data_dir is not None:
                     if success:
