@@ -98,6 +98,9 @@ def rollout(policy, env, horizon, render=False, video_writer=None, video_skip=5,
     policy.start_episode()
     obs = env.reset()
     state_dict = env.get_state()
+    
+    if args.add_perturbation:
+        env_perturber = EnvPerturber()
 
     # hack that is necessary for robosuite tasks for deterministic action playback
     obs = env.reset_to(state_dict)
@@ -116,7 +119,10 @@ def rollout(policy, env, horizon, render=False, video_writer=None, video_skip=5,
             act = policy(ob=obs)
 
             # play action
-            next_obs, r, done, _ = env.step(act)
+            if args.add_perturbation:
+                next_obs, r, done, _, is_perturbed = env_perturber(env, act)
+            else:
+                next_obs, r, done, _ = env.step(act)
 
             # compute reward
             total_reward += r
@@ -277,6 +283,86 @@ def run_trained_agent(args):
         print("Wrote dataset trajectories to {}".format(args.dataset_path))
 
 
+class EnvPerturber:
+    DEFAULT_CONFIG = dict(
+        # probability to instantiate perturbation at each step
+        perturb_ee_prob=0.1,
+        perturb_grasp_prob=0.0, # 0.05,
+        # the duration of each perturbation sequence
+        ee_perturb_len=20,
+        grasp_perturb_len=10,
+        # maximal number of perturbation sequences to be applied; set to -1 for no maximum
+        max_perturb_ee_cnt=1,
+        max_perturb_grasp_cnt=3,
+    )
+    
+    def __init__(self, config=dict()):
+        self.config = self.DEFAULT_CONFIG.copy()
+        self.config.update(config)
+        
+        self.perturb_fn = dict(
+            ee=self._perturb_ee,
+            grasp=self._perturb_grasp,
+        )
+        
+        self.reset()
+        
+    def reset(self):
+        self.history = dict(
+            # used for doing a sequence of perturbation
+            ee_perturb_step=0,
+            grasp_perturb_step=0,
+            # used for checking if exceeding a maximal number of perturbation
+            ee_perturb_cnt=0,
+            grasp_perturb_cnt=0,
+        )
+        
+    def _perturb_ee(self, env, act):
+        orig_ee = act[:-1]
+        perturbed_ee = orig_ee.copy()
+        return act
+    
+    def _perturb_grasp(self, env, act):
+        act[-1] = -1 # -1 is open and 1 is close
+        return act
+        
+    def __call__(self, env, act):
+        # robot = np.random.choice(env.env.robots) # suppose there are multiple robots, randomly pick one
+        new_act = act.copy()
+        
+        is_perturbed = dict()
+        for name in ["ee", "grasp"]:
+            if self.config[f"perturb_{name}_prob"] > 0:
+                # check if perturb or not; always perturb when the previous step is perturbed
+                if self.history[f"{name}_perturb_step"] > 0:
+                    perturb = True
+                else:
+                    perturb = np.random.uniform(0., 1.) < self.config[f"perturb_{name}_prob"]
+                    
+                if (self.config[f"max_perturb_{name}_cnt"] > 0) and \
+                    (self.history[f"{name}_perturb_cnt"] >= self.config[f"max_perturb_{name}_cnt"]):
+                    perturb = False
+                    
+                # apply perturbation and log step
+                if perturb:
+                    new_act = self.perturb_fn[name](env, new_act)
+                    
+                    self.history[f"{name}_perturb_step"] += 1
+                    
+                # reset history after a sequence of perturbation
+                if self.history[f"{name}_perturb_step"] >= self.config[f"{name}_perturb_len"]:
+                    self.history[f"{name}_perturb_step"] = 0
+                    self.history[f"{name}_perturb_cnt"] += 1 # count only when a sequence of perturbation is complete
+            else:
+                perturb = False
+        
+            is_perturbed[name] = perturb
+
+        next_obs, rew, done, info = env.step(new_act)
+    
+        return next_obs, rew, done, info, is_perturbed
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
@@ -367,6 +453,13 @@ if __name__ == "__main__":
         type=int,
         default=None,
         help="(optional) set seed for rollouts",
+    )
+    
+    parser.add_argument(
+        "--add-perturbation",
+        action="store_true",
+        default=False,
+        help="Add perturbation to the robot (as if there is external force or effect) when doing rollout",
     )
 
     args = parser.parse_args()

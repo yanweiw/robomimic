@@ -141,7 +141,13 @@ def get_shape_metadata_from_dataset(dataset_path, all_obs_keys=None, verbose=Fal
         all_obs_keys = [k for k in demo["obs"]]
 
     for k in sorted(all_obs_keys):
-        initial_shape = demo["obs/{}".format(k)].shape[1:]
+        # for pickplace with custom observation space
+        if k in ["Can_pos", "Can_to_robot0_eef_pos"]:
+            initial_shape = (3,)
+        elif k in ["Can_quat", "Can_to_robot0_eef_quat"]:
+            initial_shape = (4,)
+        else:
+            initial_shape = demo["obs/{}".format(k)].shape[1:]
         if verbose:
             print("obs key {} with shape {}".format(k, initial_shape))
         # Store processed shape for each obs key
