@@ -365,9 +365,11 @@ def playback_dataset(args):
         demos = [elem.decode("utf-8") for elem in np.array(f["mask/{}".format(args.filter_key)])]
     else:
         demos = list(f["data"].keys())
-    # from IPython import embed; embed()
-    # inds = np.argsort([int(elem[5:]) for elem in demos])
-    # demos = [demos[i] for i in inds]
+
+    if args.fail:
+        demos = [demo for demo in demos if 'fail' in demo]
+    elif args.succ:
+        demos = [demo for demo in demos if 'succ' in demo]
 
     # maybe reduce the number of demonstrations to playback
     if args.n is not None:
@@ -467,8 +469,10 @@ def playback_dataset(args):
         orig_pos = f["data/{}/robot0_eef_pos".format(ep)][()] # [()] turn h5py dataset into numpy array
         gripper = f["data/{}/robot0_gripper_qpos".format(ep)][()] 
         gripper_state = ((gripper[:, 0] - gripper[:, 1]) > 0.06).astype(np.float32).reshape(-1, 1)
-        can_pos = f["data/{}/Can_pos".format(ep)][()]
-        mode_pred_states = np.hstack((can_pos-orig_pos, gripper, can_pos))
+        # can_pos = f["data/{}/Can_pos".format(ep)][()]
+        # mode_pred_states = np.hstack((can_pos-orig_pos, gripper, can_pos))
+        obj_pos = f["data/{}/cube_pos".format(ep)][()]
+        mode_pred_states = np.hstack((obj_pos-orig_pos, gripper, obj_pos))
 
         # supply actions if using open-loop action playback
         actions = None
@@ -634,6 +638,20 @@ if __name__ == "__main__":
         type=str,
         default='/home/felixw/mode_learning/weights',
         help="path to the base weight directory",
+    )
+
+    # use only succ demos
+    parser.add_argument(
+        "--succ",   
+        action='store_true',
+        help="use only successful demos",
+    )
+
+    # use only fail demos
+    parser.add_argument(
+        "--fail",
+        action='store_true',
+        help="use only failed demos",
     )
 
     args = parser.parse_args()

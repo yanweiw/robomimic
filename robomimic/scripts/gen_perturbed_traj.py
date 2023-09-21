@@ -129,12 +129,12 @@ def playback_trajectory_with_env(
     assert not (render and write_video)
 
     action_playback = (actions is not None)
-    if action_playback:
-        assert states.shape[0] == actions.shape[0]
+    # if action_playback:
+    #     assert states.shape[0] == actions.shape[0]
 
     # downsample the trajectory to a fixed size for visualization
     assert sample_size is not None
-    orig_idx = np.array(range(states.shape[0]))
+    orig_idx = np.array(range(actions.shape[0]))
     if action_playback: 
         # save the first half of sites for original data; and the second half for perturbed data
         sampled_idx = downsample_array(orig_idx, sample_size//2)
@@ -163,7 +163,7 @@ def playback_trajectory_with_env(
     keys.append('actions')
     dict_of_arrays = {key: [] for key in keys}
     # render the simulation
-    for i in range(len(states)):
+    for i in range(len(actions)):
         if not action_playback:
             env.reset_to({"states" : states[i]})
         else:
@@ -216,17 +216,17 @@ def playback_trajectory_with_env(
         return None, None
 
 
-def perturb_traj(actions, pert_range=0.1, perturb_grasp=False):
+def perturb_traj(actions, pert_range=0.1, perturb_grasp=False, final_non_perturb_len=14):
     # orig actions (traj_len, 3)
     assert actions.shape[1] == 4
     orig_ee = actions[:, :-1]
     gripper_pos = actions[:, [-1]]
     min_perturb_len = 20
-    assert len(actions) > min_perturb_len + 14 # last 14 gripper actions are open in demos
+    assert len(actions) > min_perturb_len + final_non_perturb_len # last 14 gripper actions are open in demos
     perturbed_ee = orig_ee.copy()
     if not perturb_grasp: 
-        impulse_start = random.randint(0, len(orig_ee)-min_perturb_len-14)
-        impulse_end = random.randint(impulse_start+min_perturb_len, len(orig_ee)-14)
+        impulse_start = random.randint(0, len(orig_ee)-min_perturb_len-final_non_perturb_len)
+        impulse_end = random.randint(impulse_start+min_perturb_len, len(orig_ee)-final_non_perturb_len)
         impulse_mean = (impulse_start + impulse_end)//2
         impulse_mean_action = orig_ee[impulse_mean]
         impulse_targets = []
@@ -248,7 +248,7 @@ def perturb_traj(actions, pert_range=0.1, perturb_grasp=False):
     if perturb_grasp: 
         # max_gripper_pertrub_len = 10
         gripper_perturb_len = 10 #random.randint(5, max_gripper_pertrub_len)
-        gripper_perturb_start = random.randint(0, len(perturbed_gripper)-gripper_perturb_len-14) # last 14 gripper actions are open in demos
+        gripper_perturb_start = random.randint(0, len(perturbed_gripper)-gripper_perturb_len-final_non_perturb_len) # last 14 gripper actions are open in demos
         perturbed_gripper[gripper_perturb_start:gripper_perturb_start+gripper_perturb_len] = -1 # flip gripper actions; -1 is open and 1 is close
 
     perturbed = np.hstack((perturbed_ee, perturbed_gripper)) # append gripper action
@@ -380,7 +380,7 @@ def playback_dataset(args):
         orig_ee_pos = f["data/{}/obs/robot0_eef_pos".format(ep)][()] # [()] turn h5py dataset into numpy array
         gripper_pos = actions[:, [-1]]
         actions = np.hstack((orig_ee_pos, gripper_pos)) # append gripper action
-        actions = perturb_traj(actions, pert_range=args.pert_range, perturb_grasp=False)
+        actions = perturb_traj(actions, pert_range=args.pert_range, perturb_grasp=False, final_non_perturb_len=args.non_pert)
         # perturbed_actions_list = pulse_train(actions, pert_mag=args.pert_range)
 
         for pert_idx, perturbed_actions in enumerate([actions]):
@@ -412,7 +412,7 @@ def playback_dataset(args):
         if success: # perturb grasp
             for pert_attempt in range(1):
                 # while True:
-                new_actions = perturb_traj(actions, pert_range=args.pert_range, perturb_grasp=True)
+                new_actions = perturb_traj(actions, pert_range=args.pert_range, perturb_grasp=True, final_non_perturb_len=args.non_pert)
                 dict_of_obs, success = playback_trajectory_with_env(
                     env=env, 
                     initial_state=initial_state, 
@@ -525,6 +525,14 @@ if __name__ == "__main__":
         type=float,
         default=0.2,
         help="perturbation range",
+    )
+
+    # number of non-perturbed actions at the end of each trajectory
+    parser.add_argument(
+        "--non_pert",
+        type=int,
+        default=14,
+        help="number of non-perturbed actions at the end of each trajectory",
     )
 
     args = parser.parse_args()
