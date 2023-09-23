@@ -24,6 +24,8 @@ def prepare_data_lift(datapath, filename, max_len=200):
     f = h5py.File(os.path.join(datapath, filename + '.hdf5'), 'r')
     succ_states = []
     fail_states = []
+    et_succ_states = []
+    et_fail_states = []
     for demo in f['data'].keys():
         eef_pos = f['data'][demo]['robot0_eef_pos'][:]
         gripper = f['data'][demo]['robot0_gripper_qpos'][:]
@@ -33,10 +35,16 @@ def prepare_data_lift(datapath, filename, max_len=200):
         assert len(state) < max_len
         state = np.pad(state, ((0, max_len - len(state)), (0, 0)), 'edge')
         if 'succ' in demo:
-            succ_states.append(state)
+            if 'et' in demo:
+                et_succ_states.append(state)
+            else:
+                succ_states.append(state)
         else:
-            fail_states.append(state)
-    return np.stack(succ_states), np.stack(fail_states)
+            if 'et' in demo:
+                et_fail_states.append(state)
+            else:
+                fail_states.append(state)
+    return np.stack(succ_states), np.stack(fail_states), np.stack(et_succ_states), np.stack(et_fail_states)
 
 if __name__  == "__main__":
     import argparse
@@ -74,6 +82,8 @@ if __name__  == "__main__":
     if args.task == 'can':
         succ_states, fail_states = prepare_data_can(args.datapath, args.filename)
     if args.task == 'lift':
-        succ_states, fail_states = prepare_data_lift(args.datapath, args.filename)
+        succ_states, fail_states, et_succ_states, et_fail_states = prepare_data_lift(args.datapath, args.filename)
     np.save(os.path.join(args.datapath, args.filename + '_succ.npy'), succ_states[:args.n])
     np.save(os.path.join(args.datapath, args.filename + '_fail.npy'), fail_states[:args.n])
+    np.save(os.path.join(args.datapath, args.filename + '_et_succ.npy'), et_succ_states[:args.n])
+    np.save(os.path.join(args.datapath, args.filename + '_et_fail.npy'), et_fail_states[:args.n])

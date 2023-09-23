@@ -128,9 +128,9 @@ def playback_trajectory_with_env(
     video_count = 0
     assert not (render and write_video)
 
-    action_playback = (actions is not None)
-    if action_playback:
-        assert states.shape[0] == actions.shape[0]
+    action_playback = False #(actions is not None)
+    # if action_playback:
+    #     assert states.shape[0] == actions.shape[0]
 
     # downsample the trajectory to a fixed size for visualization
     assert sample_size is not None
@@ -143,51 +143,24 @@ def playback_trajectory_with_env(
     
     # plot the original ee positions as a reference
     ic_list = []
-    if action_playback:
-        # env.reset() # load the initial state (it will close the simulation window and re-open it)
-        # env.reset_to(initial_state)        
-        # env.reset_to({"states": states[0]})
-        
-        # get the orignal sequence of ee positions by playing back joint states
-        # ee_pos_orig = []
-        # for i in range(len(states)):
-        #     if i in sampled_idx:
-        #         env.reset_to({"states" : states[i]})
-        #         ee_pos = env.env._get_observations(force_update=True)["robot0_eef_pos"]
-        #         ee_pos_orig.append(ee_pos)        
-        for i, ee_pos in enumerate(orig_pos):
-            if i in sampled_idx:
-                in_demo_idx = np.where(sampled_idx == i)[0][0]
-                ic_idx = demo_idx * sample_size + in_demo_idx
-                env.env.set_indicator_pos("site{}".format(ic_idx), ee_pos)
-                # print("setting indiciator sites{}".format(ic_idx))
-                ic_list.append("site{}".format(ic_idx))
-                # env.env.sim.forward()
-        env.reset_to({"states": states[0]})
+    # if action_playback:      
+    #     for i, ee_pos in enumerate(orig_pos):
+    #         if i in sampled_idx:
+    #             in_demo_idx = np.where(sampled_idx == i)[0][0]
+    #             ic_idx = demo_idx * sample_size + in_demo_idx
+    #             env.env.set_indicator_pos("site{}".format(ic_idx), ee_pos)
+    #             # print("setting indiciator sites{}".format(ic_idx))
+    #             ic_list.append("site{}".format(ic_idx))
+    #             # env.env.sim.forward()
+    #     env.reset_to({"states": states[0]})
 
     # acculate data for each step
     keys = list(env.env.observation_spec().keys())
     keys.append('states')
     dict_of_arrays = {key: [] for key in keys}
-    # from IPython import embed; embed()
     # render the simulation
     for i in range(len(states)):
-        if not action_playback:
-            env.reset_to({"states" : states[i]})
-        else:
-            env.step(actions[i])
-            # if i < len(states) - 1:
-            #     # check whether the actions deterministically lead to the same recorded states
-            #     state_playback = env.get_state()["states"]
-            #     if not np.all(np.equal(states[i + 1], state_playback)):
-            #         err = np.linalg.norm(states[i + 1] - state_playback)
-            #         print("warning: playback diverged by {} at step {}".format(err, i))
-            if data_save_path is not None:
-                # save the data for each step
-                dict_of_arrays['states'].append(env.get_state()["states"])
-                obs = env.env.observation_spec()
-                for key in obs.keys():
-                    dict_of_arrays[key].append(obs[key])
+        env.reset_to({"states" : states[i]})
 
         if i in sampled_idx:
             in_demo_idx = np.where(sampled_idx == i)[0][0]
@@ -217,75 +190,74 @@ def playback_trajectory_with_env(
         if first:
             break
 
-    # from IPython import embed; embed()
     # remove the indicator sites to reduce clutter
     if action_playback:
         for ic in ic_list:
             env.env.set_indicator_pos(ic, [0, 0, 0])
 
-    if data_save_path is not None:
-        dict_of_arrays = {key: np.vstack(dict_of_arrays[key]) for key in dict_of_arrays.keys()}
-        return dict_of_arrays, env.get_reward()
-    else:
-        return None, None
+    # if data_save_path is not None:
+    #     dict_of_arrays = {key: np.vstack(dict_of_arrays[key]) for key in dict_of_arrays.keys()}
+    #     return dict_of_arrays, env.get_reward()
+    # else:
+    #     return None, None
 
-def playback_trajectory_with_obs(
-    traj_grp,
-    video_writer, 
-    video_skip=5, 
-    image_names=None,
-    first=False,
-):
-    """
-    This function reads all "rgb" observations in the dataset trajectory and
-    writes them into a video.
+# def playback_trajectory_with_obs(
+#     traj_grp,
+#     video_writer, 
+#     video_skip=5, 
+#     image_names=None,
+#     first=False,
+# ):
+#     """
+#     This function reads all "rgb" observations in the dataset trajectory and
+#     writes them into a video.
 
-    Args:
-        traj_grp (hdf5 file group): hdf5 group which corresponds to the dataset trajectory to playback
-        video_writer (imageio writer): video writer
-        video_skip (int): determines rate at which environment frames are written to video
-        image_names (list): determines which image observations are used for rendering. Pass more than
-            one to output a video with multiple image observations concatenated horizontally.
-        first (bool): if True, only use the first frame of each episode.
-    """
-    assert image_names is not None, "error: must specify at least one image observation to use in @image_names"
-    video_count = 0
+#     Args:
+#         traj_grp (hdf5 file group): hdf5 group which corresponds to the dataset trajectory to playback
+#         video_writer (imageio writer): video writer
+#         video_skip (int): determines rate at which environment frames are written to video
+#         image_names (list): determines which image observations are used for rendering. Pass more than
+#             one to output a video with multiple image observations concatenated horizontally.
+#         first (bool): if True, only use the first frame of each episode.
+#     """
+#     assert image_names is not None, "error: must specify at least one image observation to use in @image_names"
+#     video_count = 0
 
-    traj_len = traj_grp["actions"].shape[0]
-    for i in range(traj_len):
-        if video_count % video_skip == 0:
-            # concatenate image obs together
-            im = [traj_grp["obs/{}".format(k)][i] for k in image_names]
-            frame = np.concatenate(im, axis=1)
-            video_writer.append_data(frame)
-        video_count += 1
+#     traj_len = traj_grp["actions"].shape[0]
+#     for i in range(traj_len):
+#         if video_count % video_skip == 0:
+#             # concatenate image obs together
+#             im = [traj_grp["obs/{}".format(k)][i] for k in image_names]
+#             frame = np.concatenate(im, axis=1)
+#             video_writer.append_data(frame)
+#         video_count += 1
 
-        if first:
-            break
+#         if first:
+#             break
 
-def perturb_traj(orig, pert_range=0.1):
-    # orig actions (traj_len, 7), this is perturbation in the joint space
-    assert len(orig) > 10
-    impulse_start = random.randint(0, len(orig)-10)
-    impulse_end = random.randint(impulse_start+8, len(orig)-1)
-    impulse_mean = (impulse_start + impulse_end)//2
-    impulse_mean_action = orig[impulse_mean]
-    impulse_targets = []
-    for curr in impulse_mean_action:
-        target = random.uniform(curr-pert_range, curr+pert_range)
-        # if target < -1: target = -1
-        # if target > 1: target = 1
-        impulse_targets.append(target)
-    # impulse_target_x = random.uniform(-8, 8)
-    # impulse_target_y = random.uniform(-8, 8)
-    max_relative_dist = 5 # np.exp(-5) ~= 0.006
+# def perturb_traj(orig, pert_range=0.1):
+#     # orig actions (traj_len, 7), this is perturbation in the joint space
+#     assert len(orig) > 10
+#     impulse_start = random.randint(0, len(orig)-10)
+#     impulse_end = random.randint(impulse_start+8, len(orig)-1)
+#     impulse_mean = (impulse_start + impulse_end)//2
+#     impulse_mean_action = orig[impulse_mean]
+#     impulse_targets = []
+#     for curr in impulse_mean_action:
+#         target = random.uniform(curr-pert_range, curr+pert_range)
+#         # if target < -1: target = -1
+#         # if target > 1: target = 1
+#         impulse_targets.append(target)
+#     # impulse_target_x = random.uniform(-8, 8)
+#     # impulse_target_y = random.uniform(-8, 8)
+#     max_relative_dist = 5 # np.exp(-5) ~= 0.006
 
-    kernel = np.exp(-max_relative_dist*(np.array(range(len(orig))) - impulse_mean)**2 / ((impulse_start-impulse_mean)**2))
-    perturbed = orig.copy()
-    for i in range(orig.shape[1]):
-        perturbed[:, i] += (impulse_targets[i]-perturbed[:, i])*kernel
+#     kernel = np.exp(-max_relative_dist*(np.array(range(len(orig))) - impulse_mean)**2 / ((impulse_start-impulse_mean)**2))
+#     perturbed = orig.copy()
+#     for i in range(orig.shape[1]):
+#         perturbed[:, i] += (impulse_targets[i]-perturbed[:, i])*kernel
 
-    return perturbed
+#     return perturbed
 
 
 def playback_dataset(args):
@@ -343,6 +315,19 @@ def playback_dataset(args):
     else:
         demos = list(f["data"].keys())
 
+    if args.fail:
+        demos = [demo for demo in demos if 'fail' in demo]
+    elif args.succ:
+        demos = [demo for demo in demos if 'succ' in demo]        
+
+    if args.et:
+        demos = [demo for demo in demos if 'et' in demo]
+    elif args.pg:
+        demos = [demo for demo in demos if 'pg' in demo and 'et' not in demo]
+    elif args.pe:
+        demos = [demo for demo in demos if 'pe' in demo and 'et' not in demo and 'pg' not in demo]
+    
+
     # inds = np.argsort([int(elem[5:]) for elem in demos])
     # demos = [demos[i] for i in inds]
 
@@ -397,12 +382,12 @@ def playback_dataset(args):
         env.env.reset()
         env.env.set_visualization_setting('grippers', True)
 
-    orig_actions = f["data/{}/actions".format(demos[0])][()]
+    # orig_actions = f["data/{}/actions".format(demos[0])][()]
     for ind in range(len(demos)):
         ep = demos[ind]
         print("Playing back episode: {}".format(ep))
-        if '_0_' in ep:
-            orig_actions = f["data/{}/actions".format(ep)][()]
+        # if '_0_' in ep:
+        #     orig_actions = f["data/{}/actions".format(ep)][()]
 
         orig_pos = None
         data_save_path = None
@@ -410,43 +395,43 @@ def playback_dataset(args):
             data_save_path = os.path.join(args.gen_data_dir, ep)
             os.makedirs(data_save_path, exist_ok=True)        
         
-        if args.use_obs:
-            playback_trajectory_with_obs(
-                traj_grp=f["data/{}".format(ep)], 
-                video_writer=video_writer, 
-                video_skip=args.video_skip,
-                image_names=args.render_image_names,
-                first=args.first,
-            )
-            continue
+        # if args.use_obs:
+        #     playback_trajectory_with_obs(
+        #         traj_grp=f["data/{}".format(ep)], 
+        #         video_writer=video_writer, 
+        #         video_skip=args.video_skip,
+        #         image_names=args.render_image_names,
+        #         first=args.first,
+        #     )
+        #     continue
 
         # prepare initial state to reload from
         states = f["data/{}/states".format(ep)][()]
         initial_state = dict(states=states[0])
 
         # print gripper actions to debug whether the gripper perturbation is significant
-        actions = f["data/{}/actions".format(ep)][()]
-        print(actions[:, -1] == orig_actions[:, -1])
+        # actions = f["data/{}/actions".format(ep)][()]
+        # print(actions[:, -1] == orig_actions[:, -1])
 
 
         # supply actions if using open-loop action playback
-        actions = None
-        if args.use_actions:
-            actions = f["data/{}/actions".format(ep)][()]
+        # actions = None
+        # if args.use_actions:
+        #     actions = f["data/{}/actions".format(ep)][()]
 
-            # supply eef pos
-            orig_pos = f["data/{}/obs/robot0_eef_pos".format(ep)][()] # [()] turn h5py dataset into numpy array
-            eef_pos = perturb_traj(orig_pos, pert_range=0.2)
-            # supply eef quat 
-            eef_quat = f["data/{}/obs/robot0_eef_quat".format(ep)][()]
-            # actions = np.hstack((eef_pos, eef_quat, actions[:, [-1]])) # append gripper action
-            actions = np.hstack((eef_pos, actions[:, [-1]])) # append gripper action
+        #     # supply eef pos
+        #     orig_pos = f["data/{}/obs/robot0_eef_pos".format(ep)][()] # [()] turn h5py dataset into numpy array
+        #     eef_pos = perturb_traj(orig_pos, pert_range=0.2)
+        #     # supply eef quat 
+        #     eef_quat = f["data/{}/obs/robot0_eef_quat".format(ep)][()]
+        #     # actions = np.hstack((eef_pos, eef_quat, actions[:, [-1]])) # append gripper action
+        #     actions = np.hstack((eef_pos, actions[:, [-1]])) # append gripper action
 
 
-        dict_of_obs, success = playback_trajectory_with_env(
+        playback_trajectory_with_env(
             env=env, 
             initial_state=initial_state, 
-            states=states, orig_pos=orig_pos, actions=actions, 
+            states=states, orig_pos=orig_pos, actions=None, 
             render=args.render, 
             video_writer=video_writer, 
             video_skip=args.video_skip,
@@ -556,6 +541,41 @@ if __name__ == "__main__":
         type=str,
         default=None,
         help="(optional) replay a particular demonstration",
+    )
+
+    # succ tag
+    parser.add_argument(
+        "--succ",
+        action='store_true',
+        help="only playback successful demonstrations",
+    )
+
+    # fail tag
+    parser.add_argument(
+        "--fail",
+        action='store_true',
+        help="only playback failed demonstrations",
+    )
+
+    # et tag
+    parser.add_argument(
+        "--et",
+        action='store_true',
+        help="only playback et demonstrations",
+    )
+
+    # pe tag
+    parser.add_argument(
+        "--pe",
+        action='store_true',
+        help="only playback pe demonstrations",
+    )
+
+    # pg tag
+    parser.add_argument(
+        "--pg",
+        action='store_true',
+        help="only playback pg demonstrations",
     )
 
     args = parser.parse_args()

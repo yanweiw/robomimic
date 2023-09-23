@@ -1,6 +1,6 @@
 # Script to modify original demo of the lifting task
 
-# - The original human demos only lifts the cube to a height of around 0.88, which exceeds [the original succ criteria of 0.04](https://github.com/yanweiw/robosuite/blob/eb01e1ffa46f1af0a3aa3ac363d5e63097a6cbcc/robosuite/environments/manipulation/lift.py#L428) but not [the new one of 0.44](https://github.com/yanweiw/robosuite/blob/e5a60dd073768509a4ffe81eeff33f3161af0be9/robosuite/environments/manipulation/lift.py#L428)
+# - The original human demos only lifts the cube to a height of around 0.88, which exceeds [the original succ criteria of 0.04](https://github.com/yanweiw/robosuite/blob/eb01e1ffa46f1af0a3aa3ac363d5e63097a6cbcc/robosuite/environments/manipulation/lift.py#L428) but not [the new one of 0.40](https://github.com/yanweiw/robosuite/blob/e5a60dd073768509a4ffe81eeff33f3161af0be9/robosuite/environments/manipulation/lift.py#L428)
 # - So I will manually append 10 actions of 0.010m in the z direction to the original data
 #     - repeat the last state in “data/demo_*/obs/robot0_eef_pos” 40 times and change the z value
 #     - repeat the last action in “data/demo_*/actions” 40 times (this only matter for gripper state)
