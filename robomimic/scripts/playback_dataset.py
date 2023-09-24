@@ -285,7 +285,7 @@ def playback_dataset(args):
         # env_meta['env_kwargs']['controller_configs']['output_max'] = [10, 10, 10, 10, 10, 10] # these values are just placeholders to set action dim
         # env_meta['env_kwargs']['controller_configs']['output_min'] = [-10, -10, -10, -10, -10, -10]        
         env = EnvUtils.create_env_from_metadata(env_meta=env_meta, render=args.render, render_offscreen=write_video)
-        # from IPython import embed; embed()
+        from IPython import embed; embed()
         # some operations for playback are robosuite-specific, so determine if this environment is a robosuite env
         is_robosuite_env = EnvUtils.is_robosuite_env(env_meta)
 
