@@ -237,103 +237,6 @@ def playback_trajectory_with_env(
     else:
         return None, None
 
-def playback_trajectory_with_obs(
-    traj_grp,
-    video_writer, 
-    video_skip=5, 
-    image_names=None,
-    first=False,
-):
-    """
-    This function reads all "rgb" observations in the dataset trajectory and
-    writes them into a video.
-
-    Args:
-        traj_grp (hdf5 file group): hdf5 group which corresponds to the dataset trajectory to playback
-        video_writer (imageio writer): video writer
-        video_skip (int): determines rate at which environment frames are written to video
-        image_names (list): determines which image observations are used for rendering. Pass more than
-            one to output a video with multiple image observations concatenated horizontally.
-        first (bool): if True, only use the first frame of each episode.
-    """
-    assert image_names is not None, "error: must specify at least one image observation to use in @image_names"
-    video_count = 0
-
-    traj_len = traj_grp["actions"].shape[0]
-    for i in range(traj_len):
-        if video_count % video_skip == 0:
-            # concatenate image obs together
-            im = [traj_grp["obs/{}".format(k)][i] for k in image_names]
-            frame = np.concatenate(im, axis=1)
-            video_writer.append_data(frame)
-        video_count += 1
-
-        if first:
-            break
-
-def perturb_traj(orig, pert_range=0.1):
-    # orig actions (traj_len, 7), this is perturbation in the joint space
-    assert len(orig) > 10
-    impulse_start = random.randint(0, len(orig)-10)
-    impulse_end = random.randint(impulse_start+8, len(orig)-1)
-    impulse_mean = (impulse_start + impulse_end)//2
-    impulse_mean_action = orig[impulse_mean]
-    impulse_targets = []
-    for curr in impulse_mean_action:
-        target = random.uniform(curr-pert_range, curr+pert_range)
-        # if target < -1: target = -1
-        # if target > 1: target = 1
-        impulse_targets.append(target)
-    # impulse_target_x = random.uniform(-8, 8)
-    # impulse_target_y = random.uniform(-8, 8)
-    max_relative_dist = 5 # np.exp(-5) ~= 0.006
-
-    kernel = np.exp(-max_relative_dist*(np.array(range(len(orig))) - impulse_mean)**2 / ((impulse_start-impulse_mean)**2))
-    perturbed = orig.copy()
-    for i in range(orig.shape[1]):
-        perturbed[:, i] += (impulse_targets[i]-perturbed[:, i])*kernel
-
-    return perturbed
-
-def perturb_traj_new(actions, pert_range=0.1, perturb_grasp=False):
-    # orig actions (traj_len, 3)
-    assert actions.shape[1] == 4
-    orig_ee = actions[:, :-1]
-    gripper_pos = actions[:, [-1]]
-    min_perturb_len = 20
-    assert len(actions) > min_perturb_len
-    perturbed_ee = orig_ee.copy()
-    if not perturb_grasp: 
-        impulse_start = random.randint(0, len(orig_ee)-1-min_perturb_len)
-        impulse_end = random.randint(impulse_start+min_perturb_len, len(orig_ee)-1)
-        impulse_mean = (impulse_start + impulse_end)//2
-        impulse_mean_action = orig_ee[impulse_mean]
-        impulse_targets = []
-        for curr in impulse_mean_action: # 3d for ee_pos
-            target = random.uniform(curr-pert_range, curr+pert_range)
-            # if target < -1: target = -1
-            # if target > 1: target = 1
-            impulse_targets.append(target)
-        # impulse_target_x = random.uniform(-8, 8)
-        # impulse_target_y = random.uniform(-8, 8)
-        max_relative_dist = 5 # np.exp(-5) ~= 0.006
-
-        kernel = np.exp(-max_relative_dist * (np.array(range(len(orig_ee))) - impulse_mean)**2 / ((impulse_start-impulse_mean)**2))
-        for i in range(orig_ee.shape[1]):
-            perturbed_ee[:, i] += (impulse_targets[i] - perturbed_ee[:, i]) * kernel
-
-    # appending gripper actions
-    perturbed_gripper = gripper_pos.copy()
-    if perturb_grasp: 
-        max_gripper_pertrub_len = min_perturb_len 
-        gripper_perturb_len = random.randint(5, max_gripper_pertrub_len)
-        gripper_perturb_start = random.randint(0, len(perturbed_gripper)-5-gripper_perturb_len)
-        perturbed_gripper[gripper_perturb_start:gripper_perturb_start+gripper_perturb_len] *= -1 # flip gripper actions; -1 is open and 1 is close
-
-    perturbed = np.hstack((perturbed_ee, perturbed_gripper)) # append gripper action
-
-    return perturbed
-
 
 def playback_dataset(args):
     # some arg checking
@@ -370,13 +273,16 @@ def playback_dataset(args):
         # from IPython import embed; embed()
         env_meta = FileUtils.get_env_metadata_from_dataset(dataset_path=args.dataset)
         # directly control ee pose
-        # env_meta['env_kwargs']['controller_configs']['control_delta'] = False
-        # env_meta['env_kwargs']['controller_configs']['control_ori'] = False
-        env_meta['env_kwargs']['controller_configs']['kp'] = 300
-        env_meta['env_kwargs']['controller_configs']['damping'] = 10
+        env_meta['env_kwargs']['controller_configs']['control_delta'] = False
+        env_meta['env_kwargs']['controller_configs']['control_ori'] = True
+        env_meta['env_kwargs']['controller_configs']['uncouple_pos_ori'] = False # important to set orientation state
+        # env_meta['env_kwargs']['controller_configs']['kp'] = 30
+        # env_meta['env_kwargs']['controller_configs']['damping'] = 10
         # env_meta['env_kwargs']['controller_configs']['kp_limits'] = [0, 1000]
-        # env_meta['env_kwargs']['controller_configs']['output_max'] = [2, 2, 2, 1, 1, 1, 1] # these values are just placeholders
-        # env_meta['env_kwargs']['controller_configs']['output_min'] = [-2, -2, -2, -1, -1, -1, -1]        
+        env_meta['env_kwargs']['controller_configs']['input_max'] = 10
+        env_meta['env_kwargs']['controller_configs']['input_min'] = -10
+        env_meta['env_kwargs']['controller_configs']['output_max'] = [10, 10, 10, 10, 10, 10, 10] # these values are just placeholders to set action dim
+        env_meta['env_kwargs']['controller_configs']['output_min'] = [-10, -10, -10, -10, -10, -10, -10]        
         env = EnvUtils.create_env_from_metadata(env_meta=env_meta, render=args.render, render_offscreen=write_video)
         # from IPython import embed; embed()
         # some operations for playback are robosuite-specific, so determine if this environment is a robosuite env
@@ -449,16 +355,6 @@ def playback_dataset(args):
         if args.gen_data_dir is not None:
             data_save_path = os.path.join(args.gen_data_dir, ep)
             os.makedirs(data_save_path, exist_ok=True)        
-        
-        if args.use_obs:
-            playback_trajectory_with_obs(
-                traj_grp=f["data/{}".format(ep)], 
-                video_writer=video_writer, 
-                video_skip=args.video_skip,
-                image_names=args.render_image_names,
-                first=args.first,
-            )
-            continue
 
         # prepare initial state to reload from
         states = f["data/{}/states".format(ep)][()]
@@ -471,12 +367,12 @@ def playback_dataset(args):
         actions = None
         if args.use_actions:
             actions = f["data/{}/actions".format(ep)][()]
-
             # supply eef pos
             orig_pos = f["data/{}/obs/robot0_eef_pos".format(ep)][()] # [()] turn h5py dataset into numpy array
+            orig_quat = f["data/{}/obs/robot0_eef_quat".format(ep)][()]
             # eef_pos = perturb_traj(orig_pos, pert_range=0.2)
             # actions = np.hstack((eef_pos, actions[:, 3:6], actions[:, [-1]])) # append euler angle delta and gripper action
-            actions = np.hstack((orig_pos, actions[:, 3:6], actions[:, [-1]]))
+            actions = np.hstack((orig_pos, orig_quat, actions[:, [-1]]))
 
 
         # from IPython import embed; embed()
