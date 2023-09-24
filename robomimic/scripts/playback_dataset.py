@@ -188,6 +188,14 @@ def playback_trajectory_with_env(
                 obs = env.env.observation_spec()
                 for key in obs.keys():
                     dict_of_arrays[key].append(obs[key])
+            
+            # plot relative distance changes
+            nut_to_eef_pos = env.env._get_observations(force_update=True)["SquareNut_to_robot0_eef_pos"]
+            nut_to_eef_pos = [f"{value:.3f}" for value in nut_to_eef_pos]
+            # print(nut_to_eef_pos)
+            nut_to_eef_quat = env.env._get_observations(force_update=True)["SquareNut_to_robot0_eef_quat"]
+            print([f"{value:.3f}" for value in nut_to_eef_quat])
+            
 
         if i in sampled_idx:
             in_demo_idx = np.where(sampled_idx == i)[0][0]
@@ -362,19 +370,20 @@ def playback_dataset(args):
         # from IPython import embed; embed()
         env_meta = FileUtils.get_env_metadata_from_dataset(dataset_path=args.dataset)
         # directly control ee pose
-        env_meta['env_kwargs']['controller_configs']['control_delta'] = False
-        env_meta['env_kwargs']['controller_configs']['control_ori'] = False
-        env_meta['env_kwargs']['controller_configs']['kp'] = 1000
-        env_meta['env_kwargs']['controller_configs']['kp_limits'] = [0, 1000]
-        env_meta['env_kwargs']['controller_configs']['output_max'] = [2, 2, 2, 1, 1, 1, 1] # these values are just placeholders
-        env_meta['env_kwargs']['controller_configs']['output_min'] = [-2, -2, -2, -1, -1, -1, -1]        
+        # env_meta['env_kwargs']['controller_configs']['control_delta'] = False
+        # env_meta['env_kwargs']['controller_configs']['control_ori'] = False
+        env_meta['env_kwargs']['controller_configs']['kp'] = 300
+        env_meta['env_kwargs']['controller_configs']['damping'] = 10
+        # env_meta['env_kwargs']['controller_configs']['kp_limits'] = [0, 1000]
+        # env_meta['env_kwargs']['controller_configs']['output_max'] = [2, 2, 2, 1, 1, 1, 1] # these values are just placeholders
+        # env_meta['env_kwargs']['controller_configs']['output_min'] = [-2, -2, -2, -1, -1, -1, -1]        
         env = EnvUtils.create_env_from_metadata(env_meta=env_meta, render=args.render, render_offscreen=write_video)
-
+        # from IPython import embed; embed()
         # some operations for playback are robosuite-specific, so determine if this environment is a robosuite env
         is_robosuite_env = EnvUtils.is_robosuite_env(env_meta)
 
     f = h5py.File(args.dataset, "r")
-    # from IPython import embed; embed()
+    from IPython import embed; embed()
     # list of all demonstration episodes (sorted in increasing number order)
     if args.filter_key is not None:
         print("using filter key: {}".format(args.filter_key))
@@ -465,11 +474,9 @@ def playback_dataset(args):
 
             # supply eef pos
             orig_pos = f["data/{}/obs/robot0_eef_pos".format(ep)][()] # [()] turn h5py dataset into numpy array
-            eef_pos = perturb_traj(orig_pos, pert_range=0.2)
-            # supply eef quat 
-            eef_quat = f["data/{}/obs/robot0_eef_quat".format(ep)][()]
-            # actions = np.hstack((eef_pos, eef_quat, actions[:, [-1]])) # append gripper action
-            actions = np.hstack((eef_pos, actions[:, [-1]])) # append gripper action
+            # eef_pos = perturb_traj(orig_pos, pert_range=0.2)
+            # actions = np.hstack((eef_pos, actions[:, 3:6], actions[:, [-1]])) # append euler angle delta and gripper action
+            actions = np.hstack((orig_pos, actions[:, 3:6], actions[:, [-1]]))
 
 
         # from IPython import embed; embed()
