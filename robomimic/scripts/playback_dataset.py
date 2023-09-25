@@ -275,6 +275,7 @@ def playback_dataset(args):
         # directly control ee pose
         env_meta['env_kwargs']['controller_configs']['control_delta'] = True
         env_meta['env_kwargs']['controller_configs']['control_ori'] = True
+        env_meta['env_kwargs']['control_freq'] = 20
         # env_meta['env_kwargs']['controller_configs']['uncouple_pos_ori'] = False # important to set orientation state
         env_meta['env_kwargs']['controller_configs']['kp'] = 150 # 150
         env_meta['env_kwargs']['controller_configs']['damping'] = 1 # 1

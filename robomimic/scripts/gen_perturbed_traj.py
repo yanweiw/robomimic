@@ -69,6 +69,7 @@ import robomimic.utils.env_utils as EnvUtils
 import robomimic.utils.file_utils as FileUtils
 from robomimic.envs.env_base import EnvBase, EnvType
 from robosuite.wrappers import VisualizationWrapper
+import robosuite.utils.transform_utils as T
 
 
 # Define default cameras to use for each env type
@@ -127,35 +128,23 @@ def playback_trajectory_with_env(
     write_video = (video_writer is not None)
     video_count = 0
     assert not (render and write_video)
-
     action_playback = (actions is not None)
-    # if action_playback:
-    #     assert states.shape[0] == actions.shape[0]
 
     # downsample the trajectory to a fixed size for visualization
     assert sample_size is not None
     orig_idx = np.array(range(actions.shape[0]))
-    if action_playback: 
-        # save the first half of sites for original data; and the second half for perturbed data
-        sampled_idx = downsample_array(orig_idx, sample_size//2)
-    else:
-        sampled_idx = downsample_array(orig_idx, sample_size)
+    # save the first half of sites for original data; and the second half for perturbed data
+    sampled_idx = downsample_array(orig_idx, sample_size//2)
     
     # plot the original ee positions as a reference
     ic_list = []
-    if action_playback:
-        # env.reset() # load the initial state (it will close the simulation window and re-open it)
-        # env.reset_to(initial_state)        
-        # env.reset_to({"states": states[0]})       
-        for i, ee_pos in enumerate(orig_pos):
-            if i in sampled_idx:
-                in_demo_idx = np.where(sampled_idx == i)[0][0]
-                ic_idx = in_demo_idx
-                env.env.set_indicator_pos("site{}".format(ic_idx), ee_pos)
-                # print("setting indiciator sites{}".format(ic_idx))
-                ic_list.append("site{}".format(ic_idx))
-                # env.env.sim.forward()
-        env.reset_to({"states": states[0]})
+    for i, ee_pos in enumerate(orig_pos):
+        if i in sampled_idx:
+            in_demo_idx = np.where(sampled_idx == i)[0][0]
+            ic_idx = in_demo_idx
+            env.env.set_indicator_pos("site{}".format(ic_idx), ee_pos)
+            ic_list.append("site{}".format(ic_idx))
+    env.reset_to({"states": states[0]})
 
     # accumulate data for each step
     keys = list(env.env.observation_spec().keys())
@@ -164,17 +153,14 @@ def playback_trajectory_with_env(
     dict_of_arrays = {key: [] for key in keys}
     # render the simulation
     for i in range(len(actions)):
-        if not action_playback:
-            env.reset_to({"states" : states[i]})
-        else:
-            env.step(actions[i])
-            if log_data:
-                # save the data for each step
-                dict_of_arrays['states'].append(env.get_state()["states"])
-                dict_of_arrays['actions'].append(actions[i])
-                obs = env.env.observation_spec()
-                for key in obs.keys():
-                    dict_of_arrays[key].append(obs[key])
+        env.step(actions[i])
+        if log_data:
+            # save the data for each step
+            dict_of_arrays['states'].append(env.get_state()["states"])
+            dict_of_arrays['actions'].append(actions[i])
+            obs = env.env.observation_spec()
+            for key in obs.keys():
+                dict_of_arrays[key].append(obs[key])
 
         if i in sampled_idx:
             in_demo_idx = np.where(sampled_idx == i)[0][0]
@@ -183,9 +169,7 @@ def playback_trajectory_with_env(
                 ic_idx += sample_size//2
             
             env.env.set_indicator_pos("site{}".format(ic_idx), env.env._get_observations(force_update=True)["robot0_eef_pos"])
-            # print("setting indiciator sites{}".format(ic_idx))
             ic_list.append("site{}".format(ic_idx))
-            # env.env.sim.forward()
 
         # on-screen render
         if render:
@@ -218,8 +202,8 @@ def playback_trajectory_with_env(
 
 def perturb_traj(actions, pert_range=0.1, perturb_grasp=False, final_non_perturb_len=14):
     # orig actions (traj_len, 3)
-    assert actions.shape[1] == 4
-    orig_ee = actions[:, :-1]
+    # assert actions.shape[1] == 4
+    orig_ee = actions[:, :3]
     gripper_pos = actions[:, [-1]]
     min_perturb_len = 20
     assert len(actions) > min_perturb_len + final_non_perturb_len # last 14 gripper actions are open in demos
@@ -251,7 +235,7 @@ def perturb_traj(actions, pert_range=0.1, perturb_grasp=False, final_non_perturb
         gripper_perturb_start = random.randint(0, len(perturbed_gripper)-gripper_perturb_len-final_non_perturb_len) # last 14 gripper actions are open in demos
         perturbed_gripper[gripper_perturb_start:gripper_perturb_start+gripper_perturb_len] = -1 # flip gripper actions; -1 is open and 1 is close
 
-    perturbed = np.hstack((perturbed_ee, perturbed_gripper)) # append gripper action
+    perturbed = np.hstack((perturbed_ee, actions[:, 3:-1], perturbed_gripper)) # append gripper action
 
     return perturbed
 
@@ -308,12 +292,12 @@ def playback_dataset(args):
 
     env_meta = FileUtils.get_env_metadata_from_dataset(dataset_path=args.dataset)
     # directly control ee pose
-    env_meta['env_kwargs']['controller_configs']['control_delta'] = False
-    env_meta['env_kwargs']['controller_configs']['control_ori'] = False
-    env_meta['env_kwargs']['controller_configs']['kp'] = 1000
-    env_meta['env_kwargs']['controller_configs']['kp_limits'] = [0, 1000]
-    env_meta['env_kwargs']['controller_configs']['output_max'] = [2, 2, 2, 1, 1, 1, 1] # these values are just placeholders
-    env_meta['env_kwargs']['controller_configs']['output_min'] = [-2, -2, -2, -1, -1, -1, -1]        
+    env_meta['env_kwargs']['controller_configs']['control_delta'] = True
+    env_meta['env_kwargs']['controller_configs']['control_ori'] = True
+    env_meta['env_kwargs']['controller_configs']['kp'] = 150
+    # env_meta['env_kwargs']['controller_configs']['kp_limits'] = [0, 1000]
+    # env_meta['env_kwargs']['controller_configs']['output_max'] = [2, 2, 2, 1, 1, 1, ] # these values are just placeholders
+    # env_meta['env_kwargs']['controller_configs']['output_min'] = [-2, -2, -2, -1, -1, -1]        
     env = EnvUtils.create_env_from_metadata(env_meta=env_meta, render=args.render, render_offscreen=write_video)
 
     f = h5py.File(args.dataset, "r")
@@ -379,7 +363,7 @@ def playback_dataset(args):
         # supply eef pos
         orig_ee_pos = f["data/{}/obs/robot0_eef_pos".format(ep)][()] # [()] turn h5py dataset into numpy array
         gripper_pos = actions[:, [-1]]
-        actions = np.hstack((orig_ee_pos, gripper_pos)) # append gripper action
+        actions = np.hstack((orig_ee_pos, actions[:, 3:-1], gripper_pos)) # append gripper action
         perturb_type = random.choice(['pe', 'pg']) # pe: perturb ee; pg: perturb gripper
         actions = perturb_traj(actions, pert_range=args.pert_range, perturb_grasp=(perturb_type=='pg'), final_non_perturb_len=args.non_pert)
         # perturbed_actions_list = pulse_train(actions, pert_mag=args.pert_range)
