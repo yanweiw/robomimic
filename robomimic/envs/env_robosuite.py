@@ -192,10 +192,13 @@ class EnvRobosuite(EB.EnvBase):
             di = self.env._get_observations(force_update=True) if self._is_v1 else self.env._get_observation()
         
         ret = {}
-        if self._env_name == "PickPlaceCan":
-            ret["Can_to_robot0_eef_pos"] = di["Can_to_robot0_eef_pos"]
-            ret["robot0_gripper_qpos"] = di["robot0_gripper_qpos"]
-            ret["Can_pos"] = di["Can_pos"]
+        if getattr(self.env, "use_custom_obs", False): # custom observation space
+            if self._env_name == "PickPlaceCan":
+                ret["Can_to_robot0_eef_pos"] = di["Can_to_robot0_eef_pos"]
+                ret["robot0_gripper_qpos"] = di["robot0_gripper_qpos"]
+                ret["Can_pos"] = di["Can_pos"]
+            else:
+                raise ValueError(f"Unrecognized _env_name {self._env_name} when using custom observation")
         else:
             for k in di:
                 if (k in ObsUtils.OBS_KEYS_TO_MODALITIES) and ObsUtils.key_is_obs_modality(key=k, obs_modality="rgb"):

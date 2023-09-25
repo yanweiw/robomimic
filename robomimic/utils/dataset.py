@@ -32,6 +32,7 @@ class SequenceDataset(torch.utils.data.Dataset):
         hdf5_normalize_obs=False,
         filter_by_attribute=None,
         load_next_obs=True,
+        use_custom_obs=False,
     ):
         """
         Dataset class for fetching sequences of experience.
@@ -79,6 +80,8 @@ class SequenceDataset(torch.utils.data.Dataset):
                 demonstrations to load
 
             load_next_obs (bool): whether to load next_obs from the dataset
+            
+            use_custom_obs (bool): if True, use custom observation that follows the setting of mode classifiers
         """
         super(SequenceDataset, self).__init__()
 
@@ -92,6 +95,8 @@ class SequenceDataset(torch.utils.data.Dataset):
 
         self.load_next_obs = load_next_obs
         self.filter_by_attribute = filter_by_attribute
+        
+        self.use_custom_obs = use_custom_obs
 
         # get all keys that needs to be fetched
         self.obs_keys = tuple(obs_keys)
@@ -284,26 +289,30 @@ class SequenceDataset(torch.utils.data.Dataset):
             all_data[ep]["attrs"] = {}
             all_data[ep]["attrs"]["num_samples"] = hdf5_file["data/{}".format(ep)].attrs["num_samples"]
             # get obs
-            # all_data[ep]["obs"] = {k: hdf5_file["data/{}/obs/{}".format(ep, k)][()] for k in obs_keys}
-            all_data[ep]["obs"] = dict()
-            object_data = None
-            for k in obs_keys:
-                # for pickplace with custom observation space
-                if k == "Can_pos":
-                    object_data = hdf5_file["data/{}/obs/object".format(ep)][()] if object_data is None else object_data
-                    v = object_data[:, :3]
-                elif k == "Can_quat":
-                    object_data = hdf5_file["data/{}/obs/object".format(ep)][()] if object_data is None else object_data
-                    v = object_data[:, 3:7]
-                elif k == "Can_to_robot0_eef_pos":
-                    object_data = hdf5_file["data/{}/obs/object".format(ep)][()] if object_data is None else object_data
-                    v = object_data[:, 7:10]
-                elif k == "Can_to_robot0_eef_quat":
-                    object_data = hdf5_file["data/{}/obs/object".format(ep)][()] if object_data is None else object_data
-                    v = object_data[:, 10:]
-                else:
-                    v = hdf5_file["data/{}/obs/{}".format(ep, k)][()]
-                all_data[ep]["obs"][k] = v
+            if self.use_custom_obs: # custom observation space
+                all_data[ep]["obs"] = dict()
+                object_data = None
+                for k in obs_keys:
+                    if "can/ph" in self.hdf5_path: # PickPlaceCan
+                        if k == "Can_pos":
+                            object_data = hdf5_file["data/{}/obs/object".format(ep)][()] if object_data is None else object_data
+                            v = object_data[:, :3]
+                        elif k == "Can_quat":
+                            object_data = hdf5_file["data/{}/obs/object".format(ep)][()] if object_data is None else object_data
+                            v = object_data[:, 3:7]
+                        elif k == "Can_to_robot0_eef_pos":
+                            object_data = hdf5_file["data/{}/obs/object".format(ep)][()] if object_data is None else object_data
+                            v = object_data[:, 7:10]
+                        elif k == "Can_to_robot0_eef_quat":
+                            object_data = hdf5_file["data/{}/obs/object".format(ep)][()] if object_data is None else object_data
+                            v = object_data[:, 10:]
+                        else:
+                            v = hdf5_file["data/{}/obs/{}".format(ep, k)][()]
+                    else:
+                        raise ValueError(f"Unrecognized environment from hdf5 path {self.hdf5_path}")
+                    all_data[ep]["obs"][k] = v
+            else:
+                all_data[ep]["obs"] = {k: hdf5_file["data/{}/obs/{}".format(ep, k)][()] for k in obs_keys}
             if load_next_obs:
                 all_data[ep]["next_obs"] = {k: hdf5_file["data/{}/next_obs/{}".format(ep, k)][()] for k in obs_keys}
             # get other dataset keys

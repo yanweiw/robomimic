@@ -103,7 +103,7 @@ def get_env_metadata_from_dataset(dataset_path):
     return env_meta
 
 
-def get_shape_metadata_from_dataset(dataset_path, all_obs_keys=None, verbose=False):
+def get_shape_metadata_from_dataset(dataset_path, all_obs_keys=None, verbose=False, use_custom_obs=False):
     """
     Retrieves shape metadata from dataset.
 
@@ -112,6 +112,7 @@ def get_shape_metadata_from_dataset(dataset_path, all_obs_keys=None, verbose=Fal
         all_obs_keys (list): list of all modalities used by the model. If not provided, all modalities
             present in the file are used.
         verbose (bool): if True, include print statements
+        use_custom_obs (bool): if True, use custom observation that follows the setting of mode classifiers
 
     Returns:
         shape_meta (dict): shape metadata. Contains the following keys:
@@ -141,11 +142,16 @@ def get_shape_metadata_from_dataset(dataset_path, all_obs_keys=None, verbose=Fal
         all_obs_keys = [k for k in demo["obs"]]
 
     for k in sorted(all_obs_keys):
-        # for pickplace with custom observation space
-        if k in ["Can_pos", "Can_to_robot0_eef_pos"]:
-            initial_shape = (3,)
-        elif k in ["Can_quat", "Can_to_robot0_eef_quat"]:
-            initial_shape = (4,)
+        if use_custom_obs: # custom observation space
+            if "can/ph" in dataset_path: # PickPlaceCan
+                if k in ["Can_pos", "Can_to_robot0_eef_pos"]:
+                    initial_shape = (3,)
+                elif k in ["Can_quat", "Can_to_robot0_eef_quat"]:
+                    initial_shape = (4,)
+                else:
+                    initial_shape = demo["obs/{}".format(k)].shape[1:]
+            else:
+                raise ValueError(f"Unrecognized environment from dataset path {dataset_path}")
         else:
             initial_shape = demo["obs/{}".format(k)].shape[1:]
         if verbose:

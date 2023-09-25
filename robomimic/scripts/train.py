@@ -78,12 +78,16 @@ def train(config, device):
     shape_meta = FileUtils.get_shape_metadata_from_dataset(
         dataset_path=config.train.data,
         all_obs_keys=config.all_obs_keys,
-        verbose=True
+        verbose=True,
+        use_custom_obs=config.observation.use_custom_obs, # custom observation space
     )
 
     if config.experiment.env is not None:
         env_meta["env_name"] = config.experiment.env
         print("=" * 30 + "\n" + "Replacing Env to {}\n".format(env_meta["env_name"]) + "=" * 30)
+        
+    if config.observation.use_custom_obs:
+        env_meta["env_kwargs"]["use_custom_obs"] = True
 
     # create environment
     envs = OrderedDict()
@@ -345,6 +349,8 @@ def main(args):
 
     if args.name is not None:
         config.experiment.name = args.name
+        
+    config.observation.use_custom_obs = args.use_custom_obs
 
     # get torch device
     device = TorchUtils.get_torch_device(try_to_use_cuda=config.train.cuda)
@@ -420,6 +426,13 @@ if __name__ == "__main__":
         "--debug",
         action='store_true',
         help="set this flag to run a quick training run for debugging purposes"
+    )
+    
+    # custom observation space for consistency with mode classifiers
+    parser.add_argument(
+        "--use-custom-obs",
+        action='store_true',
+        help="use custom observation that follows the setting of mode classifiers"
     )
 
     args = parser.parse_args()

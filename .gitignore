@@ -1,3 +1,6 @@
+# log / checkpoints
+*_trained_models/
+
 # pip distribution folder
 dist/
 

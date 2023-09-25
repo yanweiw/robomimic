@@ -234,6 +234,8 @@ class BaseConfig(Config):
         self.observation.modalities.goal.scan = []
         self.observation.modalities.obs.do_not_lock_keys()
         self.observation.modalities.goal.do_not_lock_keys()
+        
+        self.observation.use_custom_obs = False
 
         # observation encoder architectures (per obs modality)
         # This applies to all networks that take observation dicts as input
