@@ -65,8 +65,10 @@ import robomimic.utils.file_utils as FileUtils
 import robomimic.utils.torch_utils as TorchUtils
 import robomimic.utils.tensor_utils as TensorUtils
 import robomimic.utils.obs_utils as ObsUtils
+import robomimic.utils.env_utils as EnvUtils
 from robomimic.envs.env_base import EnvBase
 from robomimic.algo import RolloutPolicy
+from robomimic.scripts.train_lin_dynamics import LINATTRACT
 
 
 def rollout(policy, env, horizon, render=False, video_writer=None, video_skip=5, return_obs=False, camera_names=None):
@@ -197,25 +199,43 @@ def run_trained_agent(args):
     # device
     device = TorchUtils.get_torch_device(try_to_use_cuda=True)
 
-    # restore policy
-    policy, ckpt_dict = FileUtils.policy_from_checkpoint(ckpt_path=ckpt_path, device=device, verbose=True)
+    if args.lin_policy:
+        rand_policy, ckpt_dict = FileUtils.policy_from_checkpoint(ckpt_path=ckpt_path, device=device, verbose=True)
+        policy = torch.load(args.lin_path)
+        env, _ = FileUtils.env_from_checkpoint(
+            ckpt_dict=ckpt_dict, 
+            env_name=args.env, 
+            render=args.render, 
+            render_offscreen=(args.video_path is not None), 
+            verbose=True,
+        )
+        # env = EnvUtils.create_env_from_metadata(env_meta=policy.policy.env_meta, render=args.render, render_offscreen=write_video, use_image_obs=False)
+        
+        
+        rollout_horizon = args.horizon
+        rollout_num_episodes = args.n_rollouts
+        if rollout_horizon is None:
+            rollout_horizon = 400 # can't load from checkpoint
+    else:
+        # restore policy
+        policy, ckpt_dict = FileUtils.policy_from_checkpoint(ckpt_path=ckpt_path, device=device, verbose=True)
 
-    # read rollout settings
-    rollout_num_episodes = args.n_rollouts
-    rollout_horizon = args.horizon
-    if rollout_horizon is None:
-        # read horizon from config
-        config, _ = FileUtils.config_from_checkpoint(ckpt_dict=ckpt_dict)
-        rollout_horizon = config.experiment.rollout.horizon
+        # read rollout settings
+        rollout_num_episodes = args.n_rollouts
+        rollout_horizon = args.horizon
+        if rollout_horizon is None:
+            # read horizon from config
+            config, _ = FileUtils.config_from_checkpoint(ckpt_dict=ckpt_dict)
+            rollout_horizon = config.experiment.rollout.horizon
 
-    # create environment from saved checkpoint
-    env, _ = FileUtils.env_from_checkpoint(
-        ckpt_dict=ckpt_dict, 
-        env_name=args.env, 
-        render=args.render, 
-        render_offscreen=(args.video_path is not None), 
-        verbose=True,
-    )
+        # create environment from saved checkpoint
+        env, _ = FileUtils.env_from_checkpoint(
+            ckpt_dict=ckpt_dict, 
+            env_name=args.env, 
+            render=args.render, 
+            render_offscreen=(args.video_path is not None), 
+            verbose=True,
+        )
 
     # maybe set seed
     if args.seed is not None:
@@ -453,6 +473,21 @@ if __name__ == "__main__":
         type=int,
         default=None,
         help="(optional) set seed for rollouts",
+    )
+
+    # for loading linear policies (doesn't use full robomimic env)
+    parser.add_argument(
+        "--lin_policy",
+        action="store_true",
+        help="(optional) load from linear policy",
+    )
+
+   # Path to trained model
+    parser.add_argument(
+        "--lin_path",
+        type=str,
+        required=False,
+        help="path to saved checkpoint pth file for linear policy",
     )
     
     parser.add_argument(
