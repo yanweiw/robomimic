@@ -145,58 +145,26 @@ def playback_trajectory_with_env(
     # plot the original ee positions as a reference
     ic_list = []
     if action_playback:
-        # env.reset() # load the initial state (it will close the simulation window and re-open it)
-        # env.reset_to(initial_state)        
-        # env.reset_to({"states": states[0]})
-        
         # get the orignal sequence of ee positions by playing back joint states
-        # ee_pos_orig = []
-        # for i in range(len(states)):
-        #     if i in sampled_idx:
-        #         env.reset_to({"states" : states[i]})
-        #         ee_pos = env.env._get_observations(force_update=True)["robot0_eef_pos"]
-        #         ee_pos_orig.append(ee_pos)        
         for i, ee_pos in enumerate(orig_pos):
             if i in sampled_idx:
                 in_demo_idx = np.where(sampled_idx == i)[0][0]
                 ic_idx = demo_idx * sample_size + in_demo_idx
                 env.env.set_indicator_pos("site{}".format(ic_idx), ee_pos)
-                # print("setting indiciator sites{}".format(ic_idx))
                 ic_list.append("site{}".format(ic_idx))
-                # env.env.sim.forward()
         env.reset_to({"states": states[0]})
 
     # acculate data for each step
     keys = list(env.env.observation_spec().keys())
     keys.append('states')
     dict_of_arrays = {key: [] for key in keys}
-    # from IPython import embed; embed()
+
     # render the simulation
     for i in range(len(states)):
         if not action_playback:
             env.reset_to({"states" : states[i]})
         else:
             env.step(actions[i])
-            # if i < len(states) - 1:
-            #     # check whether the actions deterministically lead to the same recorded states
-            #     state_playback = env.get_state()["states"]
-            #     if not np.all(np.equal(states[i + 1], state_playback)):
-            #         err = np.linalg.norm(states[i + 1] - state_playback)
-            #         print("warning: playback diverged by {} at step {}".format(err, i))
-            if data_save_path is not None:
-                # save the data for each step
-                dict_of_arrays['states'].append(env.get_state()["states"])
-                obs = env.env.observation_spec()
-                for key in obs.keys():
-                    dict_of_arrays[key].append(obs[key])
-            
-            # plot relative distance changes
-            # nut_to_eef_pos = env.env._get_observations(force_update=True)["SquareNut_to_robot0_eef_pos"]
-            # # print([f"{value:.3f}" for value in nut_to_eef_pos])
-            # nut_to_eef_quat = env.env._get_observations(force_update=True)["SquareNut_to_robot0_eef_quat"]
-            # nut_to_eef_axis_angle = T.quat2axisangle(nut_to_eef_quat)
-            # # print([f"{value:.3f}" for value in nut_to_eef_axis_angle])
-            
 
         if i in sampled_idx:
             in_demo_idx = np.where(sampled_idx == i)[0][0]
@@ -205,9 +173,7 @@ def playback_trajectory_with_env(
                 ic_idx += sample_size//2
             
             env.env.set_indicator_pos("site{}".format(ic_idx), env.env._get_observations(force_update=True)["robot0_eef_pos"])
-            # print("setting indiciator sites{}".format(ic_idx))
             ic_list.append("site{}".format(ic_idx))
-            # env.env.sim.forward()
 
         # on-screen render
         if render:
@@ -270,7 +236,6 @@ def playback_dataset(args):
         )
         ObsUtils.initialize_obs_utils_with_obs_specs(obs_modality_specs=dummy_spec)
 
-        # from IPython import embed; embed()
         env_meta = FileUtils.get_env_metadata_from_dataset(dataset_path=args.dataset)
         # directly control ee pose
         env_meta['env_kwargs']['controller_configs']['control_delta'] = True
@@ -279,27 +244,15 @@ def playback_dataset(args):
         # env_meta['env_kwargs']['controller_configs']['uncouple_pos_ori'] = False # important to set orientation state
         env_meta['env_kwargs']['controller_configs']['kp'] = 150 # 150
         env_meta['env_kwargs']['controller_configs']['damping'] = 1 # 1
-        # env_meta['env_kwargs']['controller_configs']['kp_limits'] = [0, 1000] # [0, 300]
-        # env_meta['env_kwargs']['controller_configs']['damping_limits'] = [0, 100] # [0, 10]
-        # env_meta['env_kwargs']['controller_configs']['input_max'] = 10
-        # env_meta['env_kwargs']['controller_configs']['input_min'] = -10
-        # env_meta['env_kwargs']['controller_configs']['output_max'] = [10, 10, 10, 10, 10, 10] # these values are just placeholders to set action dim
-        # env_meta['env_kwargs']['controller_configs']['output_min'] = [-10, -10, -10, -10, -10, -10]        
         env = EnvUtils.create_env_from_metadata(env_meta=env_meta, render=args.render, render_offscreen=write_video)
-        from IPython import embed; embed()
-        # some operations for playback are robosuite-specific, so determine if this environment is a robosuite env
-        is_robosuite_env = EnvUtils.is_robosuite_env(env_meta)
 
     f = h5py.File(args.dataset, "r")
-    # from IPython import embed; embed()
     # list of all demonstration episodes (sorted in increasing number order)
     if args.filter_key is not None:
         print("using filter key: {}".format(args.filter_key))
         demos = [elem.decode("utf-8") for elem in np.array(f["mask/{}".format(args.filter_key)])]
     else:
         demos = list(f["data"].keys())
-    # inds = np.argsort([int(elem[5:]) for elem in demos])
-    # demos = [demos[i] for i in inds]
 
     # maybe reduce the number of demonstrations to playback
     if args.n is not None:
@@ -354,30 +307,16 @@ def playback_dataset(args):
 
         orig_pos = None
         data_save_path = None
-        if args.gen_data_dir is not None:
-            data_save_path = os.path.join(args.gen_data_dir, ep)
-            os.makedirs(data_save_path, exist_ok=True)        
 
         # prepare initial state to reload from
         states = f["data/{}/states".format(ep)][()]
         initial_state = dict(states=states[0])
 
-        # if is_robosuite_env:
-        #     initial_state["model"] = f["data/{}".format(ep)].attrs["model_file"]
-
         # supply actions if using open-loop action playback
         actions = None
         if args.use_actions:
             actions = f["data/{}/actions".format(ep)][()]
-            # supply eef pos
-            orig_pos = f["data/{}/obs/robot0_eef_pos".format(ep)][()] # [()] turn h5py dataset into numpy array
-            # orig_quat = f["data/{}/obs/robot0_eef_quat".format(ep)][()]
-            # eef_pos = perturb_traj(orig_pos, pert_range=0.2)
-            # actions = np.hstack((eef_pos, actions[:, 3:6], actions[:, [-1]])) # append euler angle delta and gripper action
-            actions = np.hstack((orig_pos, actions[:, 3:6],  actions[:, [-1]]))
 
-
-        # from IPython import embed; embed()
 
         dict_of_obs, success = playback_trajectory_with_env(
             env=env, 
@@ -393,15 +332,6 @@ def playback_dataset(args):
             data_save_path=data_save_path,
         )
 
-        # from IPython import embed; embed()
-        if args.gen_data_dir is not None:
-            dict_of_obs['success'] = success
-            # dict_of_obs['env_args'] = f['data'].attrs['env_args']
-            with open(os.path.join(data_save_path, "env_args.txt"), "w") as outfile:
-                outfile.write(f['data'].attrs['env_args'])
-        
-            np.savez(os.path.join(data_save_path, 'obs.npz'), **dict_of_obs)
-
     f.close()
     if write_video:
         video_writer.close()
@@ -414,12 +344,7 @@ if __name__ == "__main__":
         type=str,
         help="path to hdf5 dataset",
     )
-    parser.add_argument(
-        "--gen_data_dir",
-        type=str,
-        default=None,
-        help="(optional) path to directory where generated data is stored",
-    )
+
     parser.add_argument(
         "--filter_key",
         type=str,
