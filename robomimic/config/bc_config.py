@@ -31,6 +31,29 @@ class BCConfig(BaseConfig):
         self.algo.optim_params.policy.learning_rate.scheduler_type = "multistep" # learning rate scheduler ("multistep", "linear", etc) 
         self.algo.optim_params.policy.regularization.L2 = 0.00          # L2 regularization strength
 
+        # for multi-class
+        self.algo.optim_params.policy0.optimizer_type = "adam"
+        self.algo.optim_params.policy0.learning_rate.initial = 1e-4      # policy learning rate
+        self.algo.optim_params.policy0.learning_rate.decay_factor = 0.1  # factor to decay LR by (if epoch schedule non-empty)
+        self.algo.optim_params.policy0.learning_rate.epoch_schedule = [] # epochs where LR decay occurs
+        self.algo.optim_params.policy0.learning_rate.scheduler_type = "multistep" # learning rate scheduler ("multistep", "linear", etc) 
+        self.algo.optim_params.policy0.regularization.L2 = 0.00          # L2 regularization strength
+
+        self.algo.optim_params.policy1.optimizer_type = "adam"
+        self.algo.optim_params.policy1.learning_rate.initial = 1e-4      # policy learning rate
+        self.algo.optim_params.policy1.learning_rate.decay_factor = 0.1  # factor to decay LR by (if epoch schedule non-empty)
+        self.algo.optim_params.policy1.learning_rate.epoch_schedule = [] # epochs where LR decay occurs
+        self.algo.optim_params.policy1.learning_rate.scheduler_type = "multistep" # learning rate scheduler ("multistep", "linear", etc) 
+        self.algo.optim_params.policy1.regularization.L2 = 0.00          # L2 regularization strength
+
+        self.algo.optim_params.policy2.optimizer_type = "adam"
+        self.algo.optim_params.policy2.learning_rate.initial = 1e-4      # policy learning rate
+        self.algo.optim_params.policy2.learning_rate.decay_factor = 0.1  # factor to decay LR by (if epoch schedule non-empty)
+        self.algo.optim_params.policy2.learning_rate.epoch_schedule = [] # epochs where LR decay occurs
+        self.algo.optim_params.policy2.learning_rate.scheduler_type = "multistep" # learning rate scheduler ("multistep", "linear", etc) 
+        self.algo.optim_params.policy2.regularization.L2 = 0.00          # L2 regularization strength
+
+
         # loss weights
         self.algo.loss.l2_weight = 1.0      # L2 loss weight
         self.algo.loss.l1_weight = 0.0      # L1 loss weight
@@ -104,3 +127,9 @@ class BCConfig(BaseConfig):
         self.algo.transformer.activation = "gelu"                   # activation function for MLP in Transformer Block
         self.algo.transformer.supervise_all_steps = False           # if true, supervise all intermediate actions, otherwise only final one
         self.algo.transformer.nn_parameter_for_timesteps = True     # if true, use nn.Parameter otherwise use nn.Embedding
+
+        # Multiclass
+        self.algo.multiclass.enabled = False
+        self.algo.multiclass.classifierpath = ""
+        self.algo.multiclass.modelclassifier_epoch = 0
+        self.algo.multiclass.weights_dir = ""
