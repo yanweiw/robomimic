@@ -150,6 +150,8 @@ def playback_trajectory_with_env(
     keys = list(env.env.observation_spec().keys())
     keys.append('states')
     keys.append('actions')
+    for site in ['peg_site', 'gripper0_grip_site', 'gripper0_left_ee_site', 'gripper0_right_ee_site', 'SquareNut_handle_site', 'SquareNut_center_site', 'SquareNut_side_site']:
+        keys.append(site)
     dict_of_arrays = {key: [] for key in keys}
     # render the simulation
     for i in range(len(actions)):
@@ -161,6 +163,9 @@ def playback_trajectory_with_env(
             obs = env.env.observation_spec()
             for key in obs.keys():
                 dict_of_arrays[key].append(obs[key])
+            for site in ['peg_site', 'gripper0_grip_site', 'gripper0_left_ee_site', 'gripper0_right_ee_site', 'SquareNut_handle_site', 'SquareNut_center_site', 'SquareNut_side_site']:
+                site_pos = env.env.sim.data.site_xpos[env.env.sim.model.site_name2id(site)]
+                dict_of_arrays[site].append(site_pos)
 
         if i in sampled_idx:
             in_demo_idx = np.where(sampled_idx == i)[0][0]
@@ -231,7 +236,7 @@ def perturb_traj(actions, pert_range=0.1, perturb_grasp=False, final_non_perturb
     perturbed_gripper = gripper_pos.copy()
     if perturb_grasp: 
         max_gripper_pertrub_len = 20
-        gripper_perturb_len = random.randint(10, max_gripper_pertrub_len)
+        gripper_perturb_len = random.randint(5, max_gripper_pertrub_len)
         gripper_perturb_start = random.randint(0, len(perturbed_gripper)-gripper_perturb_len-final_non_perturb_len) # last 14 gripper actions are open in demos
         perturbed_gripper[gripper_perturb_start:gripper_perturb_start+gripper_perturb_len] = -1 # flip gripper actions; -1 is open and 1 is close
 
@@ -364,7 +369,7 @@ def playback_dataset(args):
         orig_ee_pos = f["data/{}/obs/robot0_eef_pos".format(ep)][()] # [()] turn h5py dataset into numpy array
         gripper_pos = actions[:, [-1]]
         actions = np.hstack((orig_ee_pos, actions[:, 3:-1], gripper_pos)) # append gripper action
-        perturb_type = random.choice(['pe', 'pg']) # pe: perturb ee; pg: perturb gripper
+        perturb_type = random.choice(['pe', 'pe', 'pg']) # pe: perturb ee; pg: perturb gripper
         actions = perturb_traj(actions, pert_range=args.pert_range, perturb_grasp=(perturb_type=='pg'), final_non_perturb_len=args.non_pert)
         # perturbed_actions_list = pulse_train(actions, pert_mag=args.pert_range)
 
@@ -397,7 +402,7 @@ def playback_dataset(args):
 
         if success:
             # 1. perturb ending location
-            early_terminate_idx = random.randint(int(len(actions)*0.9), len(actions))
+            early_terminate_idx = random.randint(int(len(actions)*0.1), len(actions))
             new_actions = actions.copy()[:early_terminate_idx]
             dict_of_obs, success = playback_trajectory_with_env(
                 env=env, 
