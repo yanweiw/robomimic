@@ -59,7 +59,8 @@ def prepare_data_square(datapath, filename, max_len=200):
         nut_quat = f['data'][demo]['SquareNut_quat'][:]
         nut2eef_pos = f['data'][demo]['SquareNut_to_robot0_eef_pos'][:]
         nut2eef_quat = f['data'][demo]['SquareNut_to_robot0_eef_quat'][:]
-
+        eef_pos = f['data'][demo]['robot0_eef_pos'][:]
+        eef_quat = f['data'][demo]['robot0_eef_quat'][:]
         # nut_euler = []
         # for i in range(len(nut_quat)):
         #     nut_euler.append(T.quat2axisangle(nut_quat[i]))
@@ -69,12 +70,28 @@ def prepare_data_square(datapath, filename, max_len=200):
         #     nut2eef_euler.append(T.quat2axisangle(nut2eef_quat[i]))
         # nut2eef_euler = np.array(nut2eef_euler)
 
+        nut_6d = []
+        for i in range(len(nut_quat)):
+            nut_6d.append(T.quat2mat(nut_quat[i])[:2].flatten())
+        nut_6d = np.array(nut_6d)
+        nut2eef_6d = []
+        for i in range(len(nut2eef_quat)):
+            nut2eef_6d.append(T.quat2mat(nut2eef_quat[i])[:2].flatten())
+        nut2eef_6d = np.array(nut2eef_6d)
+        eef_6d = []
+        for i in range(len(eef_quat)):
+            eef_6d.append(T.quat2mat(eef_quat[i])[:2].flatten())
+        eef_6d = np.array(eef_6d)
+
         # from IPython import embed; embed()
         eef_pos = f['data'][demo]['robot0_eef_pos'][:]
         gripper = f['data'][demo]['robot0_gripper_qpos'][:]
         gripper_state = ((gripper[:, 0] - gripper[:, 1]) > 0.06).astype(np.float32).reshape(-1, 1)
         # obj_pos = f['data'][demo]['cube_pos'][:]
+        # state = np.concatenate((eef_pos, eef_6d, nut_pos, nut_6d, nut2eef_pos, nut2eef_6d, gripper), axis=1)
+        # state = np.concatenate((nut_pos, nut_6d, nut2eef_pos, nut2eef_6d, gripper), axis=1)
         state = np.concatenate((nut_pos, nut_quat, nut2eef_pos, nut2eef_quat, gripper), axis=1)
+
         try:
             assert len(state) < max_len
         except:

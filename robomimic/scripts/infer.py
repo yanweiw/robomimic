@@ -62,6 +62,7 @@ import argparse
 import imageio
 import numpy as np
 import random
+import robosuite.utils.transform_utils as T
 
 import robomimic
 import robomimic.utils.obs_utils as ObsUtils
@@ -339,6 +340,17 @@ def playback_dataset(args):
         # mode_pred_states = np.hstack((can_pos-orig_pos, gripper, can_pos))
         # obj_pos = f["data/{}/cube_pos".format(ep)][()]
         # mode_pred_states = np.hstack((obj_pos-orig_pos, gripper, obj_pos))
+
+        nut_6d = []
+        for i in range(len(nut_quat)):
+            nut_6d.append(T.quat2mat(nut_quat[i])[:2].flatten())
+        nut_6d = np.array(nut_6d)
+        nut2eef_6d = []
+        for i in range(len(nut2eef_quat)):
+            nut2eef_6d.append(T.quat2mat(nut2eef_quat[i])[:2].flatten())
+        nut2eef_6d = np.array(nut2eef_6d)
+
+        # mode_pred_states = np.concatenate((nut_pos, nut_6d, nut2eef_pos, nut2eef_6d, gripper), axis=1)
         mode_pred_states = np.concatenate((nut_pos, nut_quat, nut2eef_pos, nut2eef_quat, gripper), axis=1)
 
         dict_of_obs, success = playback_trajectory_with_env(
