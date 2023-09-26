@@ -284,7 +284,26 @@ class SequenceDataset(torch.utils.data.Dataset):
             all_data[ep]["attrs"] = {}
             all_data[ep]["attrs"]["num_samples"] = hdf5_file["data/{}".format(ep)].attrs["num_samples"]
             # get obs
-            all_data[ep]["obs"] = {k: hdf5_file["data/{}/obs/{}".format(ep, k)][()] for k in obs_keys}
+            # all_data[ep]["obs"] = {k: hdf5_file["data/{}/obs/{}".format(ep, k)][()] for k in obs_keys}
+            all_data[ep]["obs"] = dict()
+            object_data = None
+            for k in obs_keys:
+                # for pickplace with custom observation space
+                if k == "Can_pos":
+                    object_data = hdf5_file["data/{}/obs/object".format(ep)][()] if object_data is None else object_data
+                    v = object_data[:, :3]
+                elif k == "Can_quat":
+                    object_data = hdf5_file["data/{}/obs/object".format(ep)][()] if object_data is None else object_data
+                    v = object_data[:, 3:7]
+                elif k == "Can_to_robot0_eef_pos":
+                    object_data = hdf5_file["data/{}/obs/object".format(ep)][()] if object_data is None else object_data
+                    v = object_data[:, 7:10]
+                elif k == "Can_to_robot0_eef_quat":
+                    object_data = hdf5_file["data/{}/obs/object".format(ep)][()] if object_data is None else object_data
+                    v = object_data[:, 10:]
+                else:
+                    v = hdf5_file["data/{}/obs/{}".format(ep, k)][()]
+                all_data[ep]["obs"][k] = v
             if load_next_obs:
                 all_data[ep]["next_obs"] = {k: hdf5_file["data/{}/next_obs/{}".format(ep, k)][()] for k in obs_keys}
             # get other dataset keys

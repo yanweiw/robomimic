@@ -8,6 +8,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.distributions as D
 
+import numpy as np
+
 import robomimic.models.base_nets as BaseNets
 import robomimic.models.obs_nets as ObsNets
 import robomimic.models.policy_nets as PolicyNets
@@ -16,6 +18,8 @@ import robomimic.utils.loss_utils as LossUtils
 import robomimic.utils.tensor_utils as TensorUtils
 import robomimic.utils.torch_utils as TorchUtils
 import robomimic.utils.obs_utils as ObsUtils
+
+import mode_learning.eval as classeval
 
 from robomimic.algo import register_algo_factory_func, PolicyAlgo
 
@@ -38,6 +42,7 @@ def algo_config_to_class(algo_config):
     gaussian_enabled = ("gaussian" in algo_config and algo_config.gaussian.enabled)
     gmm_enabled = ("gmm" in algo_config and algo_config.gmm.enabled)
     vae_enabled = ("vae" in algo_config and algo_config.vae.enabled)
+    multiclass_enabled = ("multiclass" in algo_config and algo_config.multiclass.enabled) # MH TODO: and check for model
 
     rnn_enabled = algo_config.rnn.enabled
     # support legacy configs that do not have "transformer" item
@@ -69,6 +74,8 @@ def algo_config_to_class(algo_config):
             algo_class, algo_kwargs = BC_RNN, {}
         elif transformer_enabled:
             algo_class, algo_kwargs = BC_Transformer, {}
+        elif multiclass_enabled:
+            algo_class, algo_kwargs = BCMULTICLASS, {} #BCMULTICLASS
         else:
             algo_class, algo_kwargs = BC, {}
 
@@ -248,6 +255,252 @@ class BC(PolicyAlgo):
         """
         assert not self.nets.training
         return self.nets["policy"](obs_dict, goal_dict=goal_dict)
+
+
+# MH custom class trains 'n' BC networks where each corresponds to a specific mode
+class BCMULTICLASS(PolicyAlgo):
+    """
+    Normal BC training.
+    """
+
+    def _create_networks(self):
+        """
+        Creates networks and places them into @self.nets.
+        """
+
+        classifier_model_path = self.algo_config.multiclass.classifierpath
+        self.eva = classeval.Evaluator(classifier_model_path)
+        self.eva.load_model(epoch_num=self.algo_config.multiclass.modelclassifier_epoch, root_dir=self.algo_config.multiclass.weights_dir)   
+        self.num_classes = self.eva.net.num_modes
+
+        # self.nets = nn.ModuleDict()
+        # self.nets["policy"] = PolicyNets.ActorNetwork(
+        #     obs_shapes=self.obs_shapes,
+        #     goal_shapes=self.goal_shapes,
+        #     ac_dim=self.ac_dim,
+        #     mlp_layer_dims=self.algo_config.actor_layer_dims,
+        #     encoder_kwargs=ObsUtils.obs_encoder_kwargs_from_config(self.obs_config.encoder),
+        # )
+        # self.nets = self.nets.float().to(self.device)
+        self.nets = nn.ModuleDict()
+        for ii in range(0,self.num_classes):
+            self.nets["policy"+str(ii)] = PolicyNets.ActorNetwork(
+            obs_shapes=self.obs_shapes,
+            goal_shapes=self.goal_shapes,
+            ac_dim=self.ac_dim,
+            mlp_layer_dims=self.algo_config.actor_layer_dims,
+            encoder_kwargs=ObsUtils.obs_encoder_kwargs_from_config(self.obs_config.encoder),
+        )
+        self.nets = self.nets.float().to(self.device)
+
+
+    def process_batch_for_training(self, batch):
+        """
+        Processes input batch from a data loader to filter out
+        relevant information and prepare the batch for training.
+
+        Args:
+            batch (dict): dictionary with torch.Tensors sampled
+                from a data loader
+
+        Returns:
+            input_batch (dict): processed and filtered batch that
+                will be used for training 
+        """
+        input_batch = dict()
+        input_batch["obs"] = {k: batch["obs"][k][:, 0, :] for k in batch["obs"]}
+        input_batch["goal_obs"] = batch.get("goal_obs", None) # goals may not be present
+        input_batch["actions"] = batch["actions"][:, 0, :]
+        # we move to device first before float conversion because image observation modalities will be uint8 -
+        # this minimizes the amount of data transferred to GPU
+        return TensorUtils.to_float(TensorUtils.to_device(input_batch, self.device))
+
+
+    def train_on_batch(self, batch, epoch, validate=False):
+        """
+        Training on a single batch of data.
+
+        Args:
+            batch (dict): dictionary with torch.Tensors sampled
+                from a data loader and filtered by @process_batch_for_training
+
+            epoch (int): epoch number - required by some Algos that need
+                to perform staged training and early stopping
+
+            validate (bool): if True, don't perform any learning updates.
+
+        Returns:
+            info (dict): dictionary of relevant inputs, outputs, and losses
+                that might be relevant for logging
+        """
+        with TorchUtils.maybe_no_grad(no_grad=validate):
+            info = super(BCMULTICLASS, self).train_on_batch(batch, epoch, validate=validate)
+
+            # split batch depending on class
+            # NOTE: if there are multiple environments that require different state variables, this will need case statements
+            # NOTE: also, this is terrible memory/GPU management :)
+            modes = []
+            eef_pos_tmp = batch["obs"]["robot0_eef_pos"].detach().cpu().numpy()
+            can_pos_tmp = batch["obs"]["object"][:,0:3].detach().cpu().numpy() # first three of object are obj_pos
+            gripper =  batch["obs"]["robot0_gripper_qpos"].detach().cpu().numpy()
+            gripper_state = ((gripper[:, 0] - gripper[:, 1]) > 0.06).astype(np.float32).reshape(-1, 1)
+            mode_pred_states = np.hstack((can_pos_tmp-eef_pos_tmp, gripper, can_pos_tmp))
+
+            # estimate modes
+            guess_idx=0
+            mode_pred_states = torch.tensor(mode_pred_states, dtype=torch.float32).unsqueeze(0)
+            traj_len = mode_pred_states.shape[1]
+            with torch.no_grad():
+                mode, mode_log, mode_logits = self.eva.net.pred_mode(mode_pred_states.cuda())
+            mode = mode.reshape(-1, traj_len, self.eva.net.num_guess, self.eva.net.num_modes)[:, :, guess_idx, :]
+            mode_idx = torch.argmax(mode, dim=-1)
+
+            batches = []
+            for ii in range(0,self.num_classes):
+                batches.append(dict())
+                batches[ii]["obs"] = {k: batch["obs"][k][torch.flatten(mode_idx==ii).detach().cpu().numpy(),:] for k in batch["obs"]}
+                batches[ii]["goal_obs"] = batch.get("goal_obs", None) # goals may not be present, MH: i think this is static (i.e., same per mini-batch)
+                batches[ii]["actions"] = batch["actions"][torch.flatten(mode_idx==ii).detach().cpu().numpy(),:]
+
+
+            for ii in range(0,self.num_classes):
+                batch_tmp = batches[ii]
+                batch_tmp = TensorUtils.to_float(TensorUtils.to_device(batch_tmp, self.device))
+                # only train if the batch contains examples of the particular mode
+                batch_size = np.shape(batches[ii]["obs"]["robot0_eef_pos"])[0]
+                if batch_size < 1:
+                    continue
+
+                predictions = self._forward_training(batch_tmp,ii)
+                losses = self._compute_losses(predictions, batch_tmp)
+
+                info["predictions"] = TensorUtils.detach(predictions)
+                info["losses"] = TensorUtils.detach(losses)
+
+                if not validate:
+                    step_info = self._train_step(losses,ii)
+                    info.update(step_info)
+
+        return info
+
+    def _forward_training(self, batch, ii):
+        """
+        Internal helper function for BC algo class. Compute forward pass
+        and return network outputs in @predictions dict.
+
+        Args:
+            batch (dict): dictionary with torch.Tensors sampled
+                from a data loader and filtered by @process_batch_for_training
+
+        Returns:
+            predictions (dict): dictionary containing network outputs
+        """
+        predictions = OrderedDict()
+        actions = self.nets["policy"+str(ii)](obs_dict=batch["obs"], goal_dict=batch["goal_obs"])
+        predictions["actions"] = actions
+        return predictions
+
+    def _compute_losses(self, predictions, batch):
+        """
+        Internal helper function for BC algo class. Compute losses based on
+        network outputs in @predictions dict, using reference labels in @batch.
+
+        Args:
+            predictions (dict): dictionary containing network outputs, from @_forward_training
+            batch (dict): dictionary with torch.Tensors sampled
+                from a data loader and filtered by @process_batch_for_training
+
+        Returns:
+            losses (dict): dictionary of losses computed over the batch
+        """
+        losses = OrderedDict()
+        a_target = batch["actions"]
+        actions = predictions["actions"]
+        losses["l2_loss"] = nn.MSELoss()(actions, a_target)
+        losses["l1_loss"] = nn.SmoothL1Loss()(actions, a_target)
+        # cosine direction loss on eef delta position
+        losses["cos_loss"] = LossUtils.cosine_loss(actions[..., :3], a_target[..., :3])
+
+        action_losses = [
+            self.algo_config.loss.l2_weight * losses["l2_loss"],
+            self.algo_config.loss.l1_weight * losses["l1_loss"],
+            self.algo_config.loss.cos_weight * losses["cos_loss"],
+        ]
+        action_loss = sum(action_losses)
+        losses["action_loss"] = action_loss
+        return losses
+
+    def _train_step(self, losses,ii):
+        """
+        Internal helper function for BC algo class. Perform backpropagation on the
+        loss tensors in @losses to update networks.
+
+        Args:
+            losses (dict): dictionary of losses computed over the batch, from @_compute_losses
+        """
+
+        # gradient step
+        info = OrderedDict()
+        policy_grad_norms = TorchUtils.backprop_for_loss(
+            net=self.nets["policy"+str(ii)],
+            optim=self.optimizers["policy"+str(ii)], # same optimizer for each network
+            loss=losses["action_loss"],
+        )
+        info["policy_grad_norms"] = policy_grad_norms
+        return info
+
+    def log_info(self, info):
+        """
+        Process info dictionary from @train_on_batch to summarize
+        information to pass to tensorboard for logging.
+
+        Args:
+            info (dict): dictionary of info
+
+        Returns:
+            loss_log (dict): name -> summary statistic
+        """
+        log = super(BCMULTICLASS, self).log_info(info)
+        log["Loss"] = info["losses"]["action_loss"].item()
+        if "l2_loss" in info["losses"]:
+            log["L2_Loss"] = info["losses"]["l2_loss"].item()
+        if "l1_loss" in info["losses"]:
+            log["L1_Loss"] = info["losses"]["l1_loss"].item()
+        if "cos_loss" in info["losses"]:
+            log["Cosine_Loss"] = info["losses"]["cos_loss"].item()
+        if "policy_grad_norms" in info:
+            log["Policy_Grad_Norms"] = info["policy_grad_norms"]
+        return log
+
+    def get_action(self, obs_dict, goal_dict=None):
+        """
+        Get policy action outputs.
+
+        Args:
+            obs_dict (dict): current observation
+            goal_dict (dict): (optional) goal
+
+        Returns:
+            action (torch.Tensor): action tensor
+        """
+        assert not self.nets.training
+
+        # # NOTE: if there are multiple environments that require different state variables, this will need case statements
+        eef_pos_tmp = obs_dict["robot0_eef_pos"].detach().cpu().numpy().flatten()
+        can_pos_tmp = obs_dict["object"].detach().cpu().numpy().flatten()[0:3]
+        gripper =  obs_dict["robot0_gripper_qpos"].detach().cpu().numpy().flatten()
+        mode_pred_states = np.concatenate((can_pos_tmp-eef_pos_tmp,gripper,can_pos_tmp))
+        guess_idx=0
+        mode_pred_states = torch.tensor(mode_pred_states, dtype=torch.float32).unsqueeze(0)
+        with torch.no_grad():
+            mode, mode_log, mode_logits = self.eva.net.pred_mode(mode_pred_states.cuda())
+        traj_len = 1
+        mode = mode.reshape(-1, traj_len, self.eva.net.num_guess, self.eva.net.num_modes)[:, :, guess_idx, :]
+        mode_idx = torch.argmax(mode, dim=-1).detach().cpu().numpy()
+        mode_idx = mode_idx[0][0]
+
+        # print("mode: ",mode_idx)
+        return self.nets["policy"+str(mode_idx)](obs_dict, goal_dict=goal_dict)
 
 
 class BC_Gaussian(BC):
