@@ -74,6 +74,7 @@ sys.path.append('../../../mode_learning')
 import eval 
 import torch
 import cv2
+import pickle
 
 
 # Define default cameras to use for each env type
@@ -92,6 +93,10 @@ mode_colors = [[1.0, 0.0, 0.0],
                 [0.6, 0.2, 0.2], 
                 [0.2, 0.6, 0.2],
                 [0.2, 0.2, 0.6]]
+
+USE_MODE_TRACKER = True
+if USE_MODE_TRACKER:
+    from robosuite.environments.mode_utils import ModeTracker
 
 
 def downsample_array(original_array, fixed_size):
@@ -189,6 +194,10 @@ def playback_trajectory_with_env(
     mode_idx = mode_idx.detach().cpu().numpy()[0] # indexing to remove batch dim
 
     # render the simulation
+    if USE_MODE_TRACKER:
+        mode_tracker = ModeTracker(env=env.env.unwrapped)
+        mode_tracker.reset()
+        gt_mode_idx = []
     for i in range(len(states)):
         if not action_playback:
             env.reset_to({"states" : states[i]})
@@ -219,6 +228,11 @@ def playback_trajectory_with_env(
             # ic_list.append("site{}".format(ic_idx))
             ic_list.append("mode_{}_{}".format(mode_idx[i], ic_idx))
             # env.env.sim.forward()
+        
+        if USE_MODE_TRACKER:
+            env.step(np.zeros_like(env.env.action_spec[0])) # HACK: apply zero action to update internal state required by estimating ground-truth modes
+            mode_tracker.append_mode()
+            # print(mode_tracker.check_transitions(), mode_tracker.latest_mode)
 
         # on-screen render
         if render:
@@ -233,6 +247,11 @@ def playback_trajectory_with_env(
                     # boundary_color = mode[i] * 255
                     boundary_color = np.array(mode_colors[mode_idx[i]]) * 255
                     orig_img[:20, :] = boundary_color
+                    if USE_MODE_TRACKER:
+                        gt_mode_idx_i = env.env.unwrapped.POSSIBLE_MODES_CLS.index(mode_tracker.latest_mode.__class__)
+                        gt_mode_idx.append(gt_mode_idx_i)
+                        boundary_color_gt = np.array(mode_colors[gt_mode_idx_i]) * 255
+                        orig_img[20:40, :] = boundary_color_gt
                     video_img.append(orig_img)
                 video_img = np.concatenate(video_img, axis=1) # concatenate horizontally
                 video_writer.append_data(video_img)
@@ -245,12 +264,16 @@ def playback_trajectory_with_env(
     # if action_playback:
     for ic in ic_list:
         env.env.set_indicator_pos(ic, [0, 0, 0])
+        
+    mode_data = {"prediction": mode_idx}
+    if USE_MODE_TRACKER:
+        mode_data["gt"] = np.array(gt_mode_idx)
 
     if data_save_path is not None:
         dict_of_arrays = {key: np.vstack(dict_of_arrays[key]) for key in dict_of_arrays.keys()}
-        return dict_of_arrays, env.get_reward()
+        return dict_of_arrays, env.get_reward(), mode_data
     else:
-        return None, None
+        return None, None, mode_data
 
 def playback_trajectory_with_obs(
     traj_grp,
@@ -439,78 +462,87 @@ def playback_dataset(args):
     eva.load_model(epoch_num=args.epoch, root_dir=args.weight_dir)      
 
     # loop to visualize each trajectory
+    all_mode_data = []
     for ind in range(len(demos)):
-        ep = demos[ind]
-        print("Playing back episode: {}".format(ep))
+        try:
+            ep = demos[ind]
+            print("Playing back episode: {}".format(ep))
 
-        data_save_path = None
-        if args.gen_data_dir is not None:
-            data_save_path = os.path.join(args.gen_data_dir, ep)
-            os.makedirs(data_save_path, exist_ok=True)        
-        
-        if args.use_obs:
-            playback_trajectory_with_obs(
-                traj_grp=f["data/{}".format(ep)], 
+            data_save_path = None
+            if args.gen_data_dir is not None:
+                data_save_path = os.path.join(args.gen_data_dir, ep)
+                os.makedirs(data_save_path, exist_ok=True)        
+            
+            if args.use_obs:
+                playback_trajectory_with_obs(
+                    traj_grp=f["data/{}".format(ep)], 
+                    video_writer=video_writer, 
+                    video_skip=args.video_skip,
+                    image_names=args.render_image_names,
+                    first=args.first,
+                )
+                continue
+
+            # prepare initial state to reload from
+            states = f["data/{}/states".format(ep)][()]
+            initial_state = dict(states=states[0])
+
+            # if is_robosuite_env:
+            #     initial_state["model"] = f["data/{}".format(ep)].attrs["model_file"]
+            orig_pos = f["data/{}/robot0_eef_pos".format(ep)][()] # [()] turn h5py dataset into numpy array
+            gripper = f["data/{}/robot0_gripper_qpos".format(ep)][()] 
+            gripper_state = ((gripper[:, 0] - gripper[:, 1]) > 0.06).astype(np.float32).reshape(-1, 1)
+            can_pos = f["data/{}/Can_pos".format(ep)][()]
+            mode_pred_states = np.hstack((can_pos-orig_pos, gripper, can_pos))
+
+            # supply actions if using open-loop action playback
+            actions = None
+            if args.use_actions:
+                actions = f["data/{}/actions".format(ep)][()]
+
+                # supply eef pos
+                # orig_pos = f["data/{}/obs/robot0_eef_pos".format(ep)][()] # [()] turn h5py dataset into numpy array
+                eef_pos = perturb_traj(orig_pos, pert_range=0.2)
+                # supply eef quat 
+                eef_quat = f["data/{}/obs/robot0_eef_quat".format(ep)][()]
+                # actions = np.hstack((eef_pos, eef_quat, actions[:, [-1]])) # append gripper action
+                actions = np.hstack((eef_pos, actions[:, [-1]])) # append gripper action
+
+
+            # from IPython import embed; embed()
+
+            dict_of_obs, success, mode_data = playback_trajectory_with_env(
+                env=env, 
+                initial_state=initial_state, 
+                states=states, orig_pos=orig_pos, actions=actions, 
+                render=args.render, 
                 video_writer=video_writer, 
                 video_skip=args.video_skip,
-                image_names=args.render_image_names,
+                camera_names=args.render_image_names,
                 first=args.first,
+                demo_idx=ind,
+                sample_size=sample_size,
+                data_save_path=data_save_path,
+                mode_pred_states=mode_pred_states,
+                model=eva,
+                guess_idx=args.guess_idx,
             )
-            continue
+            all_mode_data.append(mode_data)
 
-        # prepare initial state to reload from
-        states = f["data/{}/states".format(ep)][()]
-        initial_state = dict(states=states[0])
-
-        # if is_robosuite_env:
-        #     initial_state["model"] = f["data/{}".format(ep)].attrs["model_file"]
-        orig_pos = f["data/{}/robot0_eef_pos".format(ep)][()] # [()] turn h5py dataset into numpy array
-        gripper = f["data/{}/robot0_gripper_qpos".format(ep)][()] 
-        gripper_state = ((gripper[:, 0] - gripper[:, 1]) > 0.06).astype(np.float32).reshape(-1, 1)
-        can_pos = f["data/{}/Can_pos".format(ep)][()]
-        mode_pred_states = np.hstack((can_pos-orig_pos, gripper, can_pos))
-
-        # supply actions if using open-loop action playback
-        actions = None
-        if args.use_actions:
-            actions = f["data/{}/actions".format(ep)][()]
-
-            # supply eef pos
-            # orig_pos = f["data/{}/obs/robot0_eef_pos".format(ep)][()] # [()] turn h5py dataset into numpy array
-            eef_pos = perturb_traj(orig_pos, pert_range=0.2)
-            # supply eef quat 
-            eef_quat = f["data/{}/obs/robot0_eef_quat".format(ep)][()]
-            # actions = np.hstack((eef_pos, eef_quat, actions[:, [-1]])) # append gripper action
-            actions = np.hstack((eef_pos, actions[:, [-1]])) # append gripper action
-
-
-        # from IPython import embed; embed()
-
-        dict_of_obs, success = playback_trajectory_with_env(
-            env=env, 
-            initial_state=initial_state, 
-            states=states, orig_pos=orig_pos, actions=actions, 
-            render=args.render, 
-            video_writer=video_writer, 
-            video_skip=args.video_skip,
-            camera_names=args.render_image_names,
-            first=args.first,
-            demo_idx=ind,
-            sample_size=sample_size,
-            data_save_path=data_save_path,
-            mode_pred_states=mode_pred_states,
-            model=eva,
-            guess_idx=args.guess_idx,
-        )
-
-        # from IPython import embed; embed()
-        if args.gen_data_dir is not None:
-            dict_of_obs['success'] = success
-            # dict_of_obs['env_args'] = f['data'].attrs['env_args']
-            with open(os.path.join(data_save_path, "env_args.txt"), "w") as outfile:
-                outfile.write(f['data'].attrs['env_args'])
-        
-            np.savez(os.path.join(data_save_path, 'obs.npz'), **dict_of_obs)
+            # from IPython import embed; embed()
+            if args.gen_data_dir is not None:
+                dict_of_obs['success'] = success
+                # dict_of_obs['env_args'] = f['data'].attrs['env_args']
+                with open(os.path.join(data_save_path, "env_args.txt"), "w") as outfile:
+                    outfile.write(f['data'].attrs['env_args'])
+            
+                np.savez(os.path.join(data_save_path, 'obs.npz'), **dict_of_obs)
+        except KeyboardInterrupt:
+            break
+            
+    if args.mode_data_path:
+        with open(args.mode_data_path, "wb") as f:
+            pickle.dump(all_mode_data, f)
 
     f.close()
     if write_video:
@@ -586,6 +618,14 @@ if __name__ == "__main__":
         type=int,
         default=5,
         help="render frames to video every n steps",
+    )
+    
+    # Dump a video of the dataset playback to the specified path
+    parser.add_argument(
+        "--mode_data_path",
+        type=str,
+        default=None,
+        help="(optional) dump predicted and ground-truth mode data",
     )
 
     # camera names to render, or image observations to use for writing to video
