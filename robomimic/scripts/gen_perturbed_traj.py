@@ -165,7 +165,7 @@ def playback_trajectory_with_env(
                 dict_of_arrays[key].append(obs[key])
             for site in ['peg_site', 'gripper0_grip_site', 'gripper0_left_ee_site', 'gripper0_right_ee_site', 'SquareNut_handle_site', 'SquareNut_center_site', 'SquareNut_side_site']:
                 site_pos = env.env.sim.data.site_xpos[env.env.sim.model.site_name2id(site)]
-                dict_of_arrays[site].append(site_pos)
+                dict_of_arrays[site].append(site_pos.copy())
 
         if i in sampled_idx:
             in_demo_idx = np.where(sampled_idx == i)[0][0]
