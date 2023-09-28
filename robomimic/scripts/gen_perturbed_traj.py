@@ -105,6 +105,7 @@ def playback_trajectory_with_env(
     demo_idx =None, 
     sample_size = None,
     log_data = False,
+    task = None,
 ):
     """
     Helper function to playback a single trajectory using the simulator environment.
@@ -150,8 +151,9 @@ def playback_trajectory_with_env(
     keys = list(env.env.observation_spec().keys())
     keys.append('states')
     keys.append('actions')
-    for site in ['peg_site', 'gripper0_grip_site', 'gripper0_left_ee_site', 'gripper0_right_ee_site', 'SquareNut_handle_site', 'SquareNut_center_site', 'SquareNut_side_site']:
-        keys.append(site)
+    if task == 'square':
+        for site in ['peg_site', 'gripper0_grip_site', 'gripper0_left_ee_site', 'gripper0_right_ee_site', 'SquareNut_handle_site', 'SquareNut_center_site', 'SquareNut_side_site']:
+            keys.append(site)
     dict_of_arrays = {key: [] for key in keys}
     # render the simulation
     for i in range(len(actions)):
@@ -163,9 +165,10 @@ def playback_trajectory_with_env(
             obs = env.env.observation_spec()
             for key in obs.keys():
                 dict_of_arrays[key].append(obs[key])
-            for site in ['peg_site', 'gripper0_grip_site', 'gripper0_left_ee_site', 'gripper0_right_ee_site', 'SquareNut_handle_site', 'SquareNut_center_site', 'SquareNut_side_site']:
-                site_pos = env.env.sim.data.site_xpos[env.env.sim.model.site_name2id(site)]
-                dict_of_arrays[site].append(site_pos.copy())
+            if task == 'square':
+                for site in ['peg_site', 'gripper0_grip_site', 'gripper0_left_ee_site', 'gripper0_right_ee_site', 'SquareNut_handle_site', 'SquareNut_center_site', 'SquareNut_side_site']:
+                    site_pos = env.env.sim.data.site_xpos[env.env.sim.model.site_name2id(site)]
+                    dict_of_arrays[site].append(site_pos.copy())
 
         if i in sampled_idx:
             in_demo_idx = np.where(sampled_idx == i)[0][0]
@@ -244,28 +247,6 @@ def perturb_traj(actions, pert_range=0.1, perturb_grasp=False, final_non_perturb
 
     return perturbed
 
-def pulse_train(actions, pert_mag=0.1):
-    # orig actions (traj_len, 3)
-    assert actions.shape[1] == 4
-    perturb_len = 10
-    assert len(actions) > perturb_len * 3
-    max_relative_dist = 5 # np.exp(-5) ~= 0.006
-    perturbed_actions_list = []
-    for impulse_start in np.linspace(perturb_len, len(actions)-2*perturb_len, 10, dtype=int):
-        impulse_mean = impulse_start + perturb_len//2
-        random_direction = np.random.rand(3)
-        normalized_direction = random_direction / np.linalg.norm(random_direction)
-        pert_vec = normalized_direction * pert_mag
-        kernel = np.exp(-max_relative_dist * (np.array(range(len(actions))) - impulse_mean)**2 / ((impulse_start-impulse_mean)**2))
-        perturbed_actions = actions.copy()
-        perturbed_actions[:, :3] +=  kernel.reshape(-1, 1) * pert_vec.reshape(1, -1)
-        perturbed_actions_list.append(perturbed_actions)
-        # adding gripper perturbations
-        perturbed_actions = actions.copy()
-        perturbed_actions[impulse_start:impulse_start+perturb_len, -1] *= -1
-        perturbed_actions_list.append(perturbed_actions)
-
-    return perturbed_actions_list
 
 def playback_dataset(args):
 
@@ -371,7 +352,6 @@ def playback_dataset(args):
         actions = np.hstack((orig_ee_pos, actions[:, 3:-1], gripper_pos)) # append gripper action
         perturb_type = random.choice(['pe', 'pe', 'pg']) # pe: perturb ee; pg: perturb gripper
         actions = perturb_traj(actions, pert_range=args.pert_range, perturb_grasp=(perturb_type=='pg'), final_non_perturb_len=args.non_pert)
-        # perturbed_actions_list = pulse_train(actions, pert_mag=args.pert_range)
 
         for pert_idx, perturbed_actions in enumerate([actions]):
             assert pert_idx == 0 # only one perturbation for now, otherwise following perturbations will overwrite this one
@@ -387,6 +367,7 @@ def playback_dataset(args):
                 demo_idx=ind,
                 sample_size=sample_size,
                 log_data=True,
+                task=args.task,
             )
 
             if args.gen_data_dir is not None:
@@ -416,6 +397,7 @@ def playback_dataset(args):
                 demo_idx=ind,
                 sample_size=sample_size,
                 log_data=True,
+                task=args.task,
             )
             if args.gen_data_dir is not None:
                 if success:
@@ -443,6 +425,7 @@ def playback_dataset(args):
                     demo_idx=ind,
                     sample_size=sample_size,
                     log_data=True,
+                    task=args.task,
                 )
                 if args.gen_data_dir is not None:
                     if success:
@@ -548,6 +531,14 @@ if __name__ == "__main__":
         type=int,
         default=14,
         help="number of non-perturbed actions at the end of each trajectory",
+    )
+
+    # task label
+    parser.add_argument(
+        "--task",
+        type=str,
+        required=True,
+        help="task label",
     )
 
     args = parser.parse_args()

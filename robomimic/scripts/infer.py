@@ -317,7 +317,7 @@ def playback_dataset(args):
     ########################################################
     # load trained up model
     ########################################################
-    eva = eval.Evaluator(args.run_path)
+    eva = eval.Evaluator(args.run_path, args.task)
     eva.load_model(epoch_num=args.epoch, root_dir=args.weight_dir)      
 
     # loop to visualize each trajectory
@@ -332,37 +332,25 @@ def playback_dataset(args):
         orig_pos = f["data/{}/robot0_eef_pos".format(ep)][()] # [()] turn h5py dataset into numpy array
         gripper = f["data/{}/robot0_gripper_qpos".format(ep)][()] 
         gripper_state = ((gripper[:, 0] - gripper[:, 1]) > 0.06).astype(np.float32).reshape(-1, 1)
-        # can_pos = f["data/{}/Can_pos".format(ep)][()]
-        # mode_pred_states = np.hstack((can_pos-orig_pos, gripper, can_pos))
-        # obj_pos = f["data/{}/cube_pos".format(ep)][()]
-        # mode_pred_states = np.hstack((obj_pos-orig_pos, gripper, obj_pos))
-
-        ######################### Square task
-        # nut_pos = f['data/{}/SquareNut_pos'.format(ep)][()]
-        # nut_quat = f['data/{}/SquareNut_quat'.format(ep)][()]
-        # nut2eef_pos = f['data/{}/SquareNut_to_robot0_eef_pos'.format(ep)][()]
-        # nut2eef_quat = f['data/{}/SquareNut_to_robot0_eef_quat'.format(ep)][()]
-
-        # nut_6d = []
-        # for i in range(len(nut_quat)):
-        #     nut_6d.append(T.quat2mat(nut_quat[i])[:2].flatten())
-        # nut_6d = np.array(nut_6d)
-        # nut2eef_6d = []
-        # for i in range(len(nut2eef_quat)):
-        #     nut2eef_6d.append(T.quat2mat(nut2eef_quat[i])[:2].flatten())
-        # nut2eef_6d = np.array(nut2eef_6d)
-
-        state = []
-        for target in ['SquareNut_handle_site','SquareNut_center_site','SquareNut_side_site']:
-            # state.append(f['data'][ep][target][:])
-            state.append(f['data'][ep]['peg_site'][:] - f['data'][ep][target][:])
-            for keypoint in ['gripper0_grip_site', 'gripper0_left_ee_site', 'gripper0_right_ee_site']:
-                state.append(f['data'][ep][target][:] - f['data'][ep][keypoint][:])
-        state.append(gripper)
-        state = np.concatenate(state, axis=1)
-
-        # mode_pred_states = np.concatenate((nut_pos, nut_6d, nut2eef_pos, nut2eef_6d, gripper), axis=1)
-        mode_pred_states = state
+                
+        mode_pred_states = []
+        if args.task == 'square':
+            for target in ['SquareNut_handle_site','SquareNut_center_site','SquareNut_side_site']:
+                # state.append(f['data'][ep][target][:])
+                mode_pred_states.append(f['data'][ep]['peg_site'][:] - f['data'][ep][target][:])
+                for keypoint in ['gripper0_grip_site', 'gripper0_left_ee_site', 'gripper0_right_ee_site']:
+                    mode_pred_states.append(f['data'][ep][target][:] - f['data'][ep][keypoint][:])
+                mode_pred_states.append(gripper)
+            mode_pred_states = np.concatenate(mode_pred_states, axis=1)
+        else:
+            if args.task == 'can':
+                obj_pos = f["data/{}/Can_pos".format(ep)][()]
+            elif args.task == 'lift':
+                obj_pos = f["data/{}/cube_pos".format(ep)][()]
+            else:
+                raise NotImplementedError
+            mode_pred_states = np.hstack((obj_pos-orig_pos, gripper, obj_pos))
+        
 
         dict_of_obs, success = playback_trajectory_with_env(
             env=env, 
@@ -517,6 +505,14 @@ if __name__ == "__main__":
         "--fail",
         action='store_true',
         help="use only failed demos",
+    )
+
+    # specify the task
+    parser.add_argument(
+        "--task",
+        type=str,
+        required=True,
+        help="name of the task",
     )
 
     args = parser.parse_args()
