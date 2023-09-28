@@ -12,16 +12,25 @@ def main():
     
     with open(args.mode_data_path, "rb") as f:
         mode_data = pickle.load(f)
-        
+
+    gt_fl = []
+    pred_fl = []
+    for mode_data_i in mode_data:
+        pred_len = mode_data_i["prediction"].shape[0]
+        gt_len = mode_data_i["gt"].shape[0]
+        assert pred_len == gt_len, \
+            f"One of the trajectories has inconsistent length between prediction ({pred_len}) and ground truth ({gt_len})"
+        gt_fl.append(mode_data_i["gt"])
+        pred_fl.append(mode_data_i["prediction"])
+    gt_fl = np.concatenate(gt_fl)
+    pred_fl = np.concatenate(pred_fl)
+    
     n_trajs = len(mode_data)
-    gt_fl = np.concatenate([v["gt"] for v in mode_data])
+    n_steps = gt_fl.shape[0]
+    
     last_mode_idx = gt_fl.max()
     second_last_mode_idx = last_mode_idx - 1
     gt_fl[gt_fl == last_mode_idx] = second_last_mode_idx # HACK: merge the last mode the the second last
-    pred_fl = np.concatenate([v["prediction"] for v in mode_data])
-    n_steps = min(gt_fl.shape[0], pred_fl.shape[0])
-    gt_fl = gt_fl[:n_steps]
-    pred_fl = pred_fl[:n_steps]
     
     accuracy = accuracy_score(gt_fl, pred_fl)
     c_mat_norm_method = ["true", "pred", "all"][0]

@@ -194,6 +194,7 @@ def playback_trajectory_with_env(
     mode_idx = mode_idx.detach().cpu().numpy()[0] # indexing to remove batch dim
 
     # render the simulation
+    pred_mode_idx = []
     if USE_MODE_TRACKER:
         mode_tracker = ModeTracker(env=env.env.unwrapped)
         mode_tracker.reset()
@@ -247,6 +248,7 @@ def playback_trajectory_with_env(
                     # boundary_color = mode[i] * 255
                     boundary_color = np.array(mode_colors[mode_idx[i]]) * 255
                     orig_img[:20, :] = boundary_color
+                    pred_mode_idx.append(mode_idx[i])
                     if USE_MODE_TRACKER:
                         gt_mode_idx_i = env.env.unwrapped.POSSIBLE_MODES_CLS.index(mode_tracker.latest_mode.__class__)
                         gt_mode_idx.append(gt_mode_idx_i)
@@ -265,9 +267,10 @@ def playback_trajectory_with_env(
     for ic in ic_list:
         env.env.set_indicator_pos(ic, [0, 0, 0])
         
-    mode_data = {"prediction": mode_idx}
+    mode_data = {"prediction": np.array(pred_mode_idx)}
     if USE_MODE_TRACKER:
         mode_data["gt"] = np.array(gt_mode_idx)
+    assert mode_data["prediction"].shape[0] == mode_data["gt"].shape[0]
 
     if data_save_path is not None:
         dict_of_arrays = {key: np.vstack(dict_of_arrays[key]) for key in dict_of_arrays.keys()}
@@ -492,8 +495,13 @@ def playback_dataset(args):
             orig_pos = f["data/{}/robot0_eef_pos".format(ep)][()] # [()] turn h5py dataset into numpy array
             gripper = f["data/{}/robot0_gripper_qpos".format(ep)][()] 
             gripper_state = ((gripper[:, 0] - gripper[:, 1]) > 0.06).astype(np.float32).reshape(-1, 1)
-            can_pos = f["data/{}/Can_pos".format(ep)][()]
-            mode_pred_states = np.hstack((can_pos-orig_pos, gripper, can_pos))
+            if "can" in args.dataset:
+                obj_pos = f["data/{}/Can_pos".format(ep)][()]
+            elif "lift" in args.dataset:
+                obj_pos = f["data/{}/cube_pos".format(ep)][()]
+            else:
+                raise ValueError(f"Unrecognized dataset {args.dataset} to fetch obj_pos")
+            mode_pred_states = np.hstack((obj_pos-orig_pos, gripper, obj_pos))
 
             # supply actions if using open-loop action playback
             actions = None
