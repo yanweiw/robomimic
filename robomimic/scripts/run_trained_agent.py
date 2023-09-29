@@ -122,9 +122,10 @@ def rollout(policy, env, horizon, render=False, video_writer=None, video_skip=5,
             act = policy(ob=obs)
             
             if args.use_attractor:
+                env.env._update_mode_cache()
+                current_mode = env.env.get_current_mode() # use ground truth mode for now
                 if env.name == "PickPlaceCan":
                     ## Action: [eef_xyz (3), eef_rot (3), gripper (1)]
-                    current_mode = env.env.get_current_mode() # use ground truth mode for now
                     eef_pos = torch.Tensor(obs["robot0_eef_pos"])
                     eef_pos.requires_grad_(True)
                     obj_pos = torch.from_numpy(obs["object"][:3])
@@ -172,6 +173,89 @@ def rollout(policy, env, horizon, render=False, video_writer=None, video_skip=5,
                             act[3:6] = torch.Tensor([0, 0, 0])
                         # act[:3] = coef * -grad.numpy() # NOTE: overwrite
                         # print("overwrite / modify action") # DEBUG
+                elif env.name == "Lift":
+                    eef_pos = torch.Tensor(obs["robot0_eef_pos"])
+                    eef_pos.requires_grad_(True)
+                    obj_pos = torch.from_numpy(obs["object"][:3])
+                    dist_eef_obj = torch.linalg.norm(obj_pos.data - eef_pos.data, 2)
+                    if current_mode.name == "free":
+                        attractor = torch.Tensor([-0.00099187, -0.00120366, -0.00319776]) # relative
+                        attractor[2] *= 1.5 # NOTE: place the attractor a bit higher
+                        potential_T = 1.
+                        coef = 0.1
+                        min_dist_eef_obj = 0.1
+                        def potential_fn(_eef_pos):
+                            _x_in_attractor_space = obj_pos - _eef_pos
+                            dist = torch.linalg.norm(_x_in_attractor_space - attractor, 2)
+                            # dist = torch.abs(_x_in_attractor_space - attractor).mean()
+                            return torch.exp(dist / potential_T)
+                    elif current_mode.name == "grasping":
+                        attractor = torch.Tensor([-0.00689444, 0.00194621, 0.87560444])
+                        potential_T = 1.
+                        coef = 0.05
+                        min_dist_eef_obj = 99. # NOTE: not using attractor controller
+                        def potential_fn(_eef_pos):
+                            _x_in_attractor_space = _eef_pos
+                            dist = torch.linalg.norm(_x_in_attractor_space - attractor, 2)
+                            # dist = torch.abs(_x_in_attractor_space - attractor).mean()
+                            return torch.exp(dist / potential_T)
+                        potential = potential_fn(eef_pos)
+                        grad = torch.autograd.grad(potential, eef_pos)[0]
+                        act[:3] += -coef * grad.numpy()
+                    else:
+                        coef = 0.05
+                        min_dist_eef_obj = 99. # NOTE: not using attractor controller
+                        def potential_fn(_eef_pos):
+                            return _eef_pos.mean() * 0.
+                    
+                    potential = potential_fn(eef_pos)
+                    grad = torch.autograd.grad(potential, eef_pos)[0]
+                    if dist_eef_obj >= min_dist_eef_obj:
+                        act[:3] += coef * -grad.numpy()
+                        if args.use_upright_gripper:
+                            act[3:6] = torch.Tensor([0, 0, 0])
+                elif env.name == "NutAssemblySquare":
+                    eef_pos = torch.Tensor(obs["robot0_eef_pos"])
+                    eef_pos.requires_grad_(True)
+                    obj_pos = torch.from_numpy(obs["object"][:3])
+                    dist_eef_obj = torch.linalg.norm(obj_pos.data - eef_pos.data, 2)
+                    if current_mode.name == "free":
+                        attractor = torch.Tensor([-0.00109405, -0.00054479, 0.01984971]) # relative
+                        attractor[2] *= 1.5 # NOTE: place the attractor a bit higher
+                        potential_T = 1.
+                        coef = 0.1
+                        min_dist_eef_obj = 0.1
+                        def potential_fn(_eef_pos):
+                            _x_in_attractor_space = obj_pos - _eef_pos
+                            dist = torch.linalg.norm(_x_in_attractor_space - attractor, 2)
+                            # dist = torch.abs(_x_in_attractor_space - attractor).mean()
+                            return torch.exp(dist / potential_T)
+                    elif current_mode.name == "grasping":
+                        attractor = torch.Tensor([0.16372011, 0.11015255, 0.96184433])
+                        attractor[2] *= 1.5 # NOTE: place the attractor a bit higher
+                        potential_T = 1.
+                        coef = 0.05
+                        min_dist_eef_obj = 0.1 # NOTE: not using attractor controller
+                        def potential_fn(_eef_pos):
+                            _x_in_attractor_space = _eef_pos
+                            dist = torch.linalg.norm(_x_in_attractor_space - attractor, 2)
+                            # dist = torch.abs(_x_in_attractor_space - attractor).mean()
+                            return torch.exp(dist / potential_T)
+                        potential = potential_fn(eef_pos)
+                        grad = torch.autograd.grad(potential, eef_pos)[0]
+                        act[:3] += -coef * grad.numpy()
+                    else:
+                        coef = 0.05
+                        min_dist_eef_obj = 99. # NOTE: not using attractor controller
+                        def potential_fn(_eef_pos):
+                            return _eef_pos.mean() * 0.
+                    
+                    potential = potential_fn(eef_pos)
+                    grad = torch.autograd.grad(potential, eef_pos)[0]
+                    if dist_eef_obj >= min_dist_eef_obj:
+                        act[:3] += coef * -grad.numpy()
+                        if args.use_upright_gripper:
+                            act[3:6] = torch.Tensor([0, 0, 0])
                 else:
                     raise ValueError(f"No attractor implemented for env {env.name}")
 
