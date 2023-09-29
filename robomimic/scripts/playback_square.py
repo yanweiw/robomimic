@@ -69,9 +69,8 @@ import robomimic.utils.env_utils as EnvUtils
 import robomimic.utils.file_utils as FileUtils
 from robomimic.envs.env_base import EnvBase, EnvType
 from robosuite.wrappers import VisualizationWrapper
-import matplotlib.pyplot as plt
-import numpy as np
-import time
+import robosuite.utils.transform_utils as T
+
 
 # Define default cameras to use for each env type
 DEFAULT_CAMERAS = {
@@ -91,36 +90,6 @@ def downsample_array(original_array, fixed_size):
     downsampled_array = original_array[indices]
     return downsampled_array
 
-# class MultiDataStreamPlotter:
-#     def __init__(self, num_streams, stream_labels):
-#         self.num_streams = num_streams
-#         self.stream_labels = stream_labels
-#         self.data_streams = [[] for _ in range(num_streams)]
-#         self.lines = []
-
-#         self.setup_plot()
-
-#     def setup_plot(self):
-#         self.fig, self.ax = plt.subplots()
-#         self.ax.set_xlabel('X-axis')
-#         self.ax.set_ylabel('Y-axis')
-#         self.ax.set_title('Multiple Data Streams Plot')
-#         self.ax.legend(self.stream_labels, loc='upper right')
-
-#         # Initialize lines for each data stream
-#         self.lines = [self.ax.plot([], [], label=label)[0] for label in self.stream_labels]
-
-#     def update_plot(self, new_data):
-#         for i, new_y in enumerate(new_data):
-#             self.data_streams[i].append(new_y)
-#             self.lines[i].set_data(range(len(self.data_streams[i])), self.data_streams[i])
-
-#         self.ax.relim()
-#         self.ax.autoscale_view()
-#         plt.draw()
-
-#     def show_plot(self):
-#         plt.show()
 
 def playback_trajectory_with_env(
     env, 
@@ -136,7 +105,7 @@ def playback_trajectory_with_env(
     demo_idx =None, 
     sample_size = None,
     data_save_path = None,
-    # obs_data = None,
+    site_obs = None,
 ):
     """
     Helper function to playback a single trajectory using the simulator environment.
@@ -161,29 +130,84 @@ def playback_trajectory_with_env(
     video_count = 0
     assert not (render and write_video)
 
-    action_playback = False #(actions is not None)
+    action_playback = (actions is not None)
+    if action_playback:
+        assert states.shape[0] == actions.shape[0]
+    if data_save_path is not None:
+        action_playback = False # just copy the original actions
 
     # downsample the trajectory to a fixed size for visualization
     assert sample_size is not None
     orig_idx = np.array(range(states.shape[0]))
+    # if action_playback: 
+    #     # save the first half of sites for original data; and the second half for perturbed data
+    #     sampled_idx = downsample_array(orig_idx, sample_size//2)
+    # else:
     sampled_idx = downsample_array(orig_idx, sample_size)
-    
+
     # plot the original ee positions as a reference
     ic_list = []
+    # if action_playback:
+    #     # get the orignal sequence of ee positions by playing back joint states
+    #     for i, ee_pos in enumerate(orig_pos):
+    #         if i in sampled_idx:
+    #             in_demo_idx = np.where(sampled_idx == i)[0][0]
+    #             ic_idx = demo_idx * sample_size + in_demo_idx
+    #             env.env.set_indicator_pos("site{}".format(ic_idx), ee_pos)
+    #             ic_list.append("site{}".format(ic_idx))
+    #     env.reset_to({"states": states[0]})
 
+    # # acculate data for each step
+    # keys = list(env.env.observation_spec().keys())
+    # keys.append('states')
+    # keys.append('actions')
+    # for site in ['peg_site', 'gripper0_grip_site', 'gripper0_left_ee_site', 'gripper0_right_ee_site', 'SquareNut_handle_site', 'SquareNut_center_site', 'SquareNut_side_site']:
+    #     keys.append(site)
+    # dict_of_arrays = {key: [] for key in keys}
 
     # render the simulation
     for i in range(len(states)):
-        env.reset_to({"states" : states[i]})
+        if not action_playback:
+            env.reset_to({"states" : states[i]})
+        else:
+            env.step(actions[i])
+
+        # if data_save_path is not None:
+        #     # save the data for each step
+        #     dict_of_arrays['states'].append(env.get_state()["states"])
+        #     dict_of_arrays['actions'].append(actions[i])
+        #     obs = env.env.observation_spec()
+        #     for key in obs.keys():
+        #         dict_of_arrays[key].append(obs[key])
+
+        #     for site in ['peg_site', 'gripper0_grip_site', 'gripper0_left_ee_site', 'gripper0_right_ee_site', 'SquareNut_handle_site', 'SquareNut_center_site', 'SquareNut_side_site']:
+        #         site_pos = env.env.sim.data.site_xpos[env.env.sim.model.site_name2id(site)]
+        #         dict_of_arrays[site].append(site_pos)
+
+            # plot relative distance changes
+            # nut_to_eef_pos = env.env._get_observations(force_update=True)["SquareNut_to_robot0_eef_pos"]
+            # # print([f"{value:.3f}" for value in nut_to_eef_pos])
+            # nut_to_eef_quat = env.env._get_observations(force_update=True)["SquareNut_to_robot0_eef_quat"]
+            # nut_to_eef_axis_angle = T.quat2axisangle(nut_to_eef_quat)
+            # # print([f"{value:.3f}" for value in nut_to_eef_axis_angle])
+            
 
         if i in sampled_idx:
             in_demo_idx = np.where(sampled_idx == i)[0][0]
-            ic_idx = demo_idx * sample_size + in_demo_idx
-            if action_playback:
-                ic_idx += sample_size//2
+            # ic_idx = demo_idx * sample_size + in_demo_idx
+            # if action_playback:
+                # ic_idx += sample_size//2
             
-            env.env.set_indicator_pos("site{}".format(ic_idx), env.env._get_observations(force_update=True)["robot0_eef_pos"])
-            ic_list.append("site{}".format(ic_idx))
+            # if data_save_path is not None:
+            for j, site in enumerate(site_obs.keys()):
+                ic_idx = j * sample_size + in_demo_idx
+                # from IPython import embed; embed()
+                env.env.set_indicator_pos("site{}".format(ic_idx), site_obs[site][i])
+                # site_pos = env.env.sim.data.site_xpos[env.env.sim.model.site_name2id(site)]
+                # env.env.set_indicator_pos("site{}".format(ic_idx), site_pos)
+                ic_list.append("site{}".format(ic_idx))
+            # env.env.set_indicator_pos("site{}".format(ic_idx), env.env._get_observations(force_update=True)["robot0_eef_pos"])
+            # ic_list.append("site{}".format(ic_idx))
 
         # on-screen render
         if render:
@@ -203,9 +227,15 @@ def playback_trajectory_with_env(
             break
 
     # remove the indicator sites to reduce clutter
-    if action_playback:
-        for ic in ic_list:
-            env.env.set_indicator_pos(ic, [0, 0, 0])
+    # if action_playback:
+    for ic in ic_list:
+        env.env.set_indicator_pos(ic, [0, 0, 0])
+
+    if data_save_path is not None:
+        dict_of_arrays = {key: np.vstack(dict_of_arrays[key]) for key in dict_of_arrays.keys()}
+        return dict_of_arrays, env.get_reward()
+    else:
+        return None, None
 
 
 def playback_dataset(args):
@@ -224,6 +254,10 @@ def playback_dataset(args):
         # on-screen rendering can only support one camera
         assert len(args.render_image_names) == 1
 
+    if args.use_obs:
+        assert write_video, "playback with observations can only write to video"
+        assert not args.use_actions, "playback with observations is offline and does not support action playback"
+
     # create environment only if not playing back with observations
     if not args.use_obs:
         # need to make sure ObsUtils knows which observations are images, but it doesn't matter 
@@ -234,20 +268,19 @@ def playback_dataset(args):
                     rgb=[],
                 ),
         )
-
         ObsUtils.initialize_obs_utils_with_obs_specs(obs_modality_specs=dummy_spec)
+
         env_meta = FileUtils.get_env_metadata_from_dataset(dataset_path=args.dataset)
         # directly control ee pose
         env_meta['env_kwargs']['controller_configs']['control_delta'] = True
         env_meta['env_kwargs']['controller_configs']['control_ori'] = True
-        env_meta['env_kwargs']['controller_configs']['kp'] = 150
-        # env_meta['env_kwargs']['controller_configs']['kp_limits'] = [0, 1000]
-        # env_meta['env_kwargs']['controller_configs']['output_max'] = [2, 2, 2, 1, 1, 1, ] # these values are just placeholders
-        # env_meta['env_kwargs']['controller_configs']['output_min'] = [-2, -2, -2, -1, -1, -1]        
+        env_meta['env_kwargs']['control_freq'] = 20
+        # env_meta['env_kwargs']['controller_configs']['uncouple_pos_ori'] = False # important to set orientation state
+        env_meta['env_kwargs']['controller_configs']['kp'] = 150 # 150
+        env_meta['env_kwargs']['controller_configs']['damping'] = 1 # 1
         env = EnvUtils.create_env_from_metadata(env_meta=env_meta, render=args.render, render_offscreen=write_video)
 
     f = h5py.File(args.dataset, "r")
-    # from IPython import embed; embed()
     # list of all demonstration episodes (sorted in increasing number order)
     if args.filter_key is not None:
         print("using filter key: {}".format(args.filter_key))
@@ -255,25 +288,9 @@ def playback_dataset(args):
     else:
         demos = list(f["data"].keys())
 
-    if args.fail:
-        demos = [demo for demo in demos if 'fail' in demo]
-    elif args.succ:
-        demos = [demo for demo in demos if 'succ' in demo]        
-
-    if args.et:
-        demos = [demo for demo in demos if 'et' in demo]
-    elif args.pg:
-        demos = [demo for demo in demos if 'pg' in demo and 'et' not in demo]
-    elif args.pe:
-        demos = [demo for demo in demos if 'pe' in demo and 'et' not in demo and 'pg' not in demo]
-
     # maybe reduce the number of demonstrations to playback
     if args.n is not None:
-        demos = demos[args.n:(args.n+30)]
-    elif args.demo is not None:
-        demos = [d for d in demos if args.demo in d]
-        if len(demos) == 1:
-            demos = [demos[0]] * 3 # repeat the demo 3 times
+        demos = demos[args.n:args.n+20]
 
     # maybe dump video
     video_writer = None
@@ -282,60 +299,84 @@ def playback_dataset(args):
 
     if not args.use_obs:
         sample_size = args.ic
-        if args.use_actions:
-            sample_size = sample_size * 2
+        # if args.use_actions:
+            # sample_size = sample_size * 2
         ic = []
-        for i in range(len(demos)):
+        num_sites = 10
+        for i in range(num_sites):
             rgba_random = np.random.uniform(0, 1, 3).tolist() + [0.5]
-            blue = [0, 0, 1, 1] 
-            red = [1, 0, 0, 1]
-            if args.use_actions:
-                rgba1 = blue
-                rgba2 = red
-            else:
-                rgba1 = rgba_random
-                rgba2 = rgba_random
-            ic += [
-                {
-                "type": "sphere",
-                "size": [0.004],
-                "rgba": rgba1,
-                "name": "site{}".format(i * sample_size + j),
-                }
-                for j in range(sample_size//2)
-            ]
-            ic += [
-                {
-                "type": "sphere",
-                "size": [0.004],
-                "rgba": rgba2,
-                "name": "site{}".format(i * sample_size + sample_size//2 + j),
-                }
-                for j in range(sample_size//2)
-            ]
-
+            # blue = [0, 0, 1, 1] 
+            # red = [1, 0, 0, 1]
+            # if args.use_actions:
+                # rgba1 = blue
+                # rgba2 = red
+            # else:
+                # rgba1 = rgba_random
+                # rgba2 = rgba_random
+            # ic += [
+            #     {
+            #     "type": "sphere",
+            #     "size": [0.004],
+            #     "rgba": rgba1,
+            #     "name": "site{}".format(i * sample_size + j),
+            #     }
+            #     for j in range(sample_size//2)
+            # ]
+            # ic += [
+            #     {
+            #     "type": "sphere",
+            #     "size": [0.004],
+            #     "rgba": rgba2,
+            #     "name": "site{}".format(i * sample_size + sample_size//2 + j),
+            #     }
+            #     for j in range(sample_size//2)
+            # ]
+            for j in range(sample_size):
+                ic += [
+                    {
+                    "type": "sphere",
+                    "size": [0.004],
+                    "rgba": rgba_random,
+                    "name": "site{}".format(i * sample_size + j),
+                    }
+                ]
         env.env = VisualizationWrapper(env.env, indicator_configs=ic)
         env.env.reset()
         env.env.set_visualization_setting('grippers', True)
 
-    # orig_actions = f["data/{}/actions".format(demos[0])][()]
     for ind in range(len(demos)):
         ep = demos[ind]
         print("Playing back episode: {}".format(ep))
+
         orig_pos = None
+        data_save_path = None
+        if args.gen_data_dir is not None:
+            data_save_path = os.path.join(args.gen_data_dir, ep)
+            os.makedirs(data_save_path, exist_ok=True)        
+
         # prepare initial state to reload from
         states = f["data/{}/states".format(ep)][()]
         initial_state = dict(states=states[0])
-        # obs_data = {}
-        # obs_data['nut_pos'] = f['data'][ep]['SquareNut_pos'][:]
-        # obs_data['nut_quat'] = f['data'][ep]['SquareNut_quat'][:]
-        # obs_data['nut2eef_pos'] = f['data'][ep]['SquareNut_to_robot0_eef_pos'][:]
-        # obs_data['nut2eef_quat'] = f['data'][ep]['SquareNut_to_robot0_eef_quat'][:]
+        sites_obs = {}
+        for site in ['peg_site', 'gripper0_grip_site', 'gripper0_left_ee_site', 'gripper0_right_ee_site', 'SquareNut_handle_site', 'SquareNut_center_site', 'SquareNut_side_site']:
+            sites_obs[site] = f["data/{}/{}".format(ep, site)][()]
 
-        playback_trajectory_with_env(
+        # supply actions if using open-loop action playback
+        actions = None
+        # if args.use_actions:
+        #     actions = f["data/{}/actions".format(ep)][()]
+        #     if data_save_path is not None: # save original actions, otherwise, supply eef pos
+        #         orig_pos = f["data/{}/obs/robot0_eef_pos".format(ep)][()] # [()] turn h5py dataset into numpy array
+        #         # orig_quat = f["data/{}/obs/robot0_eef_quat".format(ep)][()]
+        #         # eef_pos = perturb_traj(orig_pos, pert_range=0.2)
+        #         # actions = np.hstack((eef_pos, actions[:, 3:6], actions[:, [-1]])) # append euler angle delta and gripper action
+        #         actions = np.hstack((orig_pos, actions[:, 3:6],  actions[:, [-1]]))
+
+
+        dict_of_obs, success = playback_trajectory_with_env(
             env=env, 
             initial_state=initial_state, 
-            states=states, orig_pos=orig_pos, actions=None, 
+            states=states, orig_pos=orig_pos, actions=actions, 
             render=args.render, 
             video_writer=video_writer, 
             video_skip=args.video_skip,
@@ -343,9 +384,17 @@ def playback_dataset(args):
             first=args.first,
             demo_idx=ind,
             sample_size=sample_size,
-            data_save_path=None,
-            # obs_data=obs_data,
+            data_save_path=data_save_path,
+            site_obs=sites_obs,
         )
+
+        if args.gen_data_dir is not None:
+            dict_of_obs['success'] = success
+            # dict_of_obs['env_args'] = f['data'].attrs['env_args']
+            with open(os.path.join(data_save_path, "env_args.txt"), "w") as outfile:
+                outfile.write(f['data'].attrs['env_args'])
+        
+            np.savez(os.path.join(data_save_path, 'obs.npz'), **dict_of_obs)
 
     f.close()
     if write_video:
@@ -359,7 +408,7 @@ if __name__ == "__main__":
         type=str,
         help="path to hdf5 dataset",
     )
-    parser.add_argument(
+    parser.add_argument( # only use this option to add sites to the perturbed trajectories without sites
         "--gen_data_dir",
         type=str,
         default=None,
@@ -438,49 +487,6 @@ if __name__ == "__main__":
         "--first",
         action='store_true',
         help="use first frame of each episode",
-    )
-
-    # Replay a particular demonstration
-    parser.add_argument(
-        "--demo",
-        type=str,
-        default=None,
-        help="(optional) replay a particular demonstration",
-    )
-
-    # succ tag
-    parser.add_argument(
-        "--succ",
-        action='store_true',
-        help="only playback successful demonstrations",
-    )
-
-    # fail tag
-    parser.add_argument(
-        "--fail",
-        action='store_true',
-        help="only playback failed demonstrations",
-    )
-
-    # et tag
-    parser.add_argument(
-        "--et",
-        action='store_true',
-        help="only playback et demonstrations",
-    )
-
-    # pe tag
-    parser.add_argument(
-        "--pe",
-        action='store_true',
-        help="only playback pe demonstrations",
-    )
-
-    # pg tag
-    parser.add_argument(
-        "--pg",
-        action='store_true',
-        help="only playback pg demonstrations",
     )
 
     args = parser.parse_args()

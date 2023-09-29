@@ -46,9 +46,16 @@ def gather_demonstrations_as_hdf5(directory, out_dir, env_info=None):
     num_succ_eps = 0
     num_fail_eps = 0
     env_name = None  # will get populated at some point
-
+    num_eps = 0
+    num_et_succ = 0
+    num_et_fail = 0
+    num_pe_succ = 0
+    num_pe_fail = 0
+    num_pg_succ = 0
+    num_pg_fail = 0
     for ep_directory in os.listdir(directory):
-
+        num_eps += 1
+        
         data_path = os.path.join(directory, ep_directory, "obs.npz")
         data = np.load(data_path, allow_pickle=True)
         ep_grp = grp.create_group(ep_directory)
@@ -58,9 +65,31 @@ def gather_demonstrations_as_hdf5(directory, out_dir, env_info=None):
         if data['success']:
             print("Number {}th successful trajectory has been saved".format(num_succ_eps))
             num_succ_eps += 1
+            if 'et' in ep_directory:
+                num_et_succ += 1
+            elif 'pg' in ep_directory:
+                num_pg_succ += 1
+            elif 'pe' in ep_directory:
+                num_pe_succ += 1                
         else:
             print("Number {}th failing trajectory has been saved".format(num_fail_eps))
             num_fail_eps += 1
+            if 'et' in ep_directory:
+                num_et_fail += 1
+            elif 'pg' in ep_directory:
+                num_pg_fail += 1
+            elif 'pe' in ep_directory:
+                num_pe_fail += 1
+        
+    print(f'\nNumber of successful trajectories: {num_succ_eps/num_eps:.3f}')
+    print(f'Number of successful ET trajectories: {num_et_succ/num_eps:.3f}')
+    print(f'Number of successful PE trajectories: {num_pe_succ/num_eps:.3f}')
+    print(f'Number of successful PG trajectories: {num_pg_succ/num_eps:.3f}')
+    
+    print(f'\nNumber of failing trajectories: {num_fail_eps/num_eps:.3f}')
+    print(f'Number of failing ET trajectories: {num_et_fail/num_eps:.3f}')
+    print(f'Number of failing PE trajectories: {num_pe_fail/num_eps:.3f}')
+    print(f'Number of failing PG trajectories: {num_pg_fail/num_eps:.3f}')
 
         # if data['success']:
         #     # tag = str(num_succ_eps).zfill(6)
