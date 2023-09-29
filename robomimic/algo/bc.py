@@ -254,8 +254,8 @@ class BC(PolicyAlgo):
             action (torch.Tensor): action tensor
         """
         assert not self.nets.training
-        print(self.nets["policy"](obs_dict, goal_dict=goal_dict))
-        print(self.nets["policy"](obs_dict, goal_dict=goal_dict).size())
+        # print(self.nets["policy"](obs_dict, goal_dict=goal_dict))
+        # print(self.nets["policy"](obs_dict, goal_dict=goal_dict).size())
         return self.nets["policy"](obs_dict, goal_dict=goal_dict)
 
 

@@ -57,6 +57,7 @@ import h5py
 import imageio
 import numpy as np
 from copy import deepcopy
+import tqdm
 
 import torch
 
@@ -119,6 +120,60 @@ def rollout(policy, env, horizon, render=False, video_writer=None, video_skip=5,
 
             # get action from policy
             act = policy(ob=obs)
+            
+            if args.use_attractor:
+                if env.name == "PickPlaceCan":
+                    ## Action: [eef_xyz (3), eef_rot (3), gripper (1)]
+                    current_mode = env.env.get_current_mode() # use ground truth mode for now
+                    eef_pos = torch.Tensor(obs["robot0_eef_pos"])
+                    eef_pos.requires_grad_(True)
+                    obj_pos = torch.from_numpy(obs["object"][:3])
+                    dist_eef_obj = torch.linalg.norm(obj_pos.data - eef_pos.data, 2)
+                    if current_mode.name == "free":
+                        attractor = torch.Tensor([-0.00016607, 0.00097243, 0.01710138]) # relative
+                        attractor[2] *= 1.5 # NOTE: place the attractor a bit higher
+                        potential_T = 1.
+                        coef = 0.1
+                        min_dist_eef_obj = 0.1
+                        def potential_fn(_eef_pos):
+                            _x_in_attractor_space = obj_pos - _eef_pos
+                            dist = torch.linalg.norm(_x_in_attractor_space - attractor, 2)
+                            # dist = torch.abs(_x_in_attractor_space - attractor).mean()
+                            return torch.exp(dist / potential_T)
+                    elif current_mode.name == "grasping":
+                        attractor = torch.Tensor([0.18300294, 0.2530928, 1.03142587])
+                        potential_T = 1.
+                        coef = 0.05
+                        min_dist_eef_obj = 99. # NOTE: not using attractor controller
+                        def potential_fn(_eef_pos):
+                            _x_in_attractor_space = _eef_pos
+                            dist = torch.linalg.norm(_x_in_attractor_space - attractor, 2)
+                            # dist = torch.abs(_x_in_attractor_space - attractor).mean()
+                            return torch.exp(dist / potential_T)
+                        potential = potential_fn(eef_pos)
+                        grad = torch.autograd.grad(potential, eef_pos)[0]
+                        act[:3] += -coef * grad.numpy()
+                    elif current_mode.name == "hovering":
+                        attractor = torch.Tensor([0.20470058, 0.31206185, 1.07567048])
+                        potential_T = 1.
+                        coef = 0.05
+                        min_dist_eef_obj = 99. # NOTE: not using attractor controller
+                        def potential_fn(_eef_pos):
+                            _x_in_attractor_space = _eef_pos
+                            dist = torch.linalg.norm(_x_in_attractor_space - attractor, 2)
+                            # dist = torch.abs(_x_in_attractor_space - attractor).mean()
+                            return torch.exp(dist / potential_T)
+                    
+                    potential = potential_fn(eef_pos)
+                    grad = torch.autograd.grad(potential, eef_pos)[0]
+                    if dist_eef_obj >= min_dist_eef_obj:
+                        act[:3] += coef * -grad.numpy()
+                        if args.use_upright_gripper:
+                            act[3:6] = torch.Tensor([0, 0, 0])
+                        # act[:3] = coef * -grad.numpy() # NOTE: overwrite
+                        # print("overwrite / modify action") # DEBUG
+                else:
+                    raise ValueError(f"No attractor implemented for env {env.name}")
 
             # play action
             if args.add_perturbation:
@@ -255,7 +310,8 @@ def run_trained_agent(args):
         total_samples = 0
 
     rollout_stats = []
-    for i in range(rollout_num_episodes):
+    pbar = tqdm.tqdm(range(rollout_num_episodes), total=rollout_num_episodes)
+    for i in pbar:
         stats, traj = rollout(
             policy=policy, 
             env=env, 
@@ -267,6 +323,8 @@ def run_trained_agent(args):
             camera_names=args.camera_names,
         )
         rollout_stats.append(stats)
+        success_rate = np.mean(TensorUtils.list_of_flat_dict_to_dict_of_list(rollout_stats)["Success_Rate"])
+        pbar.set_description("Running success rate {:.2f}".format(success_rate))
 
         if write_dataset:
             # store transitions
@@ -309,10 +367,10 @@ class EnvPerturber:
         perturb_ee_prob=0.1,
         perturb_grasp_prob=0.0, # 0.05,
         # the duration of each perturbation sequence
-        ee_perturb_len=20,
+        ee_perturb_len=10,
         grasp_perturb_len=10,
         # maximal number of perturbation sequences to be applied; set to -1 for no maximum
-        max_perturb_ee_cnt=1,
+        max_perturb_ee_cnt=2,
         max_perturb_grasp_cnt=3,
     )
     
@@ -336,10 +394,22 @@ class EnvPerturber:
             ee_perturb_cnt=0,
             grasp_perturb_cnt=0,
         )
+        self.cache = dict(
+            ee_perturb_target=None
+        )
         
     def _perturb_ee(self, env, act):
         orig_ee = act[:-1]
         perturbed_ee = orig_ee.copy()
+        if self.history["ee_perturb_step"] == 0:
+            self.cache["ee_perturb_target"] = np.random.uniform(low=-1., high=1., size=3)
+            self.cache["ee_perturb_target"][2] = max(0.5, self.cache["ee_perturb_target"][2])
+        dir_to_target = (self.cache["ee_perturb_target"] - perturbed_ee[:3])
+        dir_to_target = dir_to_target / np.linalg.norm(dir_to_target, 2)
+        perturbed_ee[:3] += dir_to_target * 1.
+        
+        act[:-1] = perturbed_ee
+        
         return act
     
     def _perturb_grasp(self, env, act):
@@ -495,6 +565,20 @@ if __name__ == "__main__":
         action="store_true",
         default=False,
         help="Add perturbation to the robot (as if there is external force or effect) when doing rollout",
+    )
+    
+    parser.add_argument(
+        "--use-attractor",
+        action="store_true",
+        default=False,
+        help="Use attractor to modify action from a pretrained policy",
+    )
+    
+    parser.add_argument(
+        "--use-upright-gripper",
+        action="store_true",
+        default=False,
+        help="Make the gripper upright when using the attractor controller",
     )
 
     args = parser.parse_args()
