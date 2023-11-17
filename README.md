@@ -33,6 +33,21 @@ python playback_dataset.py --dataset ../../datasets/can/ph/low_dim_v141.hdf5 --r
 
 [**[Homepage]**](https://robomimic.github.io/) &ensp; [**[Documentation]**](https://robomimic.github.io/docs/introduction/overview.html) &ensp; [**[Study Paper]**](https://arxiv.org/abs/2108.03298) &ensp; [**[Study Website]**](https://robomimic.github.io/study/) &ensp; [**[ARISE Initiative]**](https://github.com/ARISE-Initiative)
 
+## Mode Classiciation Evaluation
+* Examples
+  ```
+  $ python infer.py --dataset ../../shared_runs/can/pert_01_1000.hdf5 
+                    --n 0 
+                    --run_path mode_learning/robosuite/ff5lyb3e 
+                    --epoch 99000 
+                    --guess_idx 0 
+                    --weight_dir ../../shared_runs/weights 
+                    --render_image_names agentview 
+                    --video_path ../../shared_runs/can/pert_01_1000_16.mp4 
+                    --mode_data_path ../../shared_runs/can/pert_01_1000_16.pkl
+  $ python scripts/plot_mode_comparison.py --mode-data-path ../shared_runs/can/pert_01_1000_16.pkl
+  ```
+
 -------
 ## Latest Updates
 - [07/03/2023] **v0.3.0**: BC-Transformer and IQL :brain:, support for DeepMind MuJoCo bindings :robot:, pre-trained image reps :eye:, wandb logging :chart_with_upwards_trend:, and more

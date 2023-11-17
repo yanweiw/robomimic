@@ -62,6 +62,8 @@ import argparse
 import imageio
 import numpy as np
 import random
+import tqdm
+import robosuite.utils.transform_utils as T
 
 import robomimic
 import robomimic.utils.obs_utils as ObsUtils
@@ -74,6 +76,7 @@ sys.path.append('../../../mode_learning')
 import eval 
 import torch
 import cv2
+import pickle
 
 
 # Define default cameras to use for each env type
@@ -92,6 +95,10 @@ mode_colors = [[1.0, 0.0, 0.0],
                 [0.6, 0.2, 0.2], 
                 [0.2, 0.6, 0.2],
                 [0.2, 0.2, 0.6]]
+
+USE_MODE_TRACKER = True
+if USE_MODE_TRACKER:
+    from robosuite.environments.mode_utils import ModeTracker
 
 
 def downsample_array(original_array, fixed_size):
@@ -146,18 +153,12 @@ def playback_trajectory_with_env(
     video_count = 0
     assert not (render and write_video)
 
-    action_playback = (actions is not None)
-    if action_playback:
-        assert states.shape[0] == actions.shape[0]
+    action_playback = None
 
     # downsample the trajectory to a fixed size for visualization
     assert sample_size is not None
     orig_idx = np.array(range(states.shape[0]))
-    if action_playback: 
-        # save the first half of sites for original data; and the second half for perturbed data
-        sampled_idx = downsample_array(orig_idx, sample_size//2)
-    else:
-        sampled_idx = downsample_array(orig_idx, sample_size)
+    sampled_idx = downsample_array(orig_idx, sample_size)
     
     # plot the original ee positions as a reference
     ic_list = []
@@ -171,11 +172,9 @@ def playback_trajectory_with_env(
                 # env.env.sim.forward()
         env.reset_to({"states": states[0]})
 
-    # acculate data for each step
-    keys = list(env.env.observation_spec().keys())
-    keys.append('states')
-    dict_of_arrays = {key: [] for key in keys}
-
+    ########################################################
+    # inference starts here
+    ########################################################
     mode_pred_states = torch.tensor(mode_pred_states, dtype=torch.float32).unsqueeze(0)
     traj_len = mode_pred_states.shape[1]
     with torch.no_grad():
@@ -189,36 +188,30 @@ def playback_trajectory_with_env(
     mode_idx = mode_idx.detach().cpu().numpy()[0] # indexing to remove batch dim
 
     # render the simulation
+    pred_mode_idx = []
+    if USE_MODE_TRACKER:
+        mode_tracker = ModeTracker(env=env.env.unwrapped)
+        mode_tracker.reset()
+        env.env.unwrapped._reset_mode_cache()
+        gt_mode_idx = []
     for i in range(len(states)):
-        if not action_playback:
-            env.reset_to({"states" : states[i]})
-        else:
-            env.step(actions[i])
-            # if i < len(states) - 1:
-            #     # check whether the actions deterministically lead to the same recorded states
-            #     state_playback = env.get_state()["states"]
-            #     if not np.all(np.equal(states[i + 1], state_playback)):
-            #         err = np.linalg.norm(states[i + 1] - state_playback)
-            #         print("warning: playback diverged by {} at step {}".format(err, i))
-            if data_save_path is not None:
-                # save the data for each step
-                dict_of_arrays['states'].append(env.get_state()["states"])
-                obs = env.env.observation_spec()
-                for key in obs.keys():
-                    dict_of_arrays[key].append(obs[key])
+        env.reset_to({"states" : states[i]})
 
         if i in sampled_idx:
             in_demo_idx = np.where(sampled_idx == i)[0][0]
             ic_idx = in_demo_idx # demo_idx * sample_size + in_demo_idx
             if action_playback:
                 ic_idx += sample_size//2
-            # env.env.set_indicator_pos("site{}".format(ic_idx), env.env._get_observations(force_update=True)["robot0_eef_pos"])
             
             env.env.set_indicator_pos("mode_{}_{}".format(mode_idx[i], ic_idx), env.env._get_observations(force_update=True)["robot0_eef_pos"])
-            # print("setting indiciator sites{}".format(ic_idx))
-            # ic_list.append("site{}".format(ic_idx))
             ic_list.append("mode_{}_{}".format(mode_idx[i], ic_idx))
             # env.env.sim.forward()
+        
+        if USE_MODE_TRACKER:
+            # env.step(np.zeros_like(env.env.action_spec[0])) # HACK: apply zero action to update internal state required by estimating ground-truth modes
+            env.env.unwrapped._update_mode_cache() # don't do step; do this instead
+            mode_tracker.append_mode()
+            # print(mode_tracker.check_transitions(), mode_tracker.latest_mode)
 
         # on-screen render
         if render:
@@ -233,6 +226,12 @@ def playback_trajectory_with_env(
                     # boundary_color = mode[i] * 255
                     boundary_color = np.array(mode_colors[mode_idx[i]]) * 255
                     orig_img[:20, :] = boundary_color
+                    pred_mode_idx.append(mode_idx[i])
+                    if USE_MODE_TRACKER:
+                        gt_mode_idx_i = env.env.unwrapped.POSSIBLE_MODES_CLS.index(mode_tracker.latest_mode.__class__)
+                        gt_mode_idx.append(gt_mode_idx_i)
+                        boundary_color_gt = np.array(mode_colors[gt_mode_idx_i]) * 255
+                        orig_img[20:40, :] = boundary_color_gt
                     video_img.append(orig_img)
                 video_img = np.concatenate(video_img, axis=1) # concatenate horizontally
                 video_writer.append_data(video_img)
@@ -245,12 +244,18 @@ def playback_trajectory_with_env(
     # if action_playback:
     for ic in ic_list:
         env.env.set_indicator_pos(ic, [0, 0, 0])
+        
+    mode_data = {"prediction": np.array(pred_mode_idx)}
+    if USE_MODE_TRACKER:
+        mode_data["gt"] = np.array(gt_mode_idx)
+    assert mode_data["prediction"].shape[0] == mode_data["gt"].shape[0]
 
     if data_save_path is not None:
         dict_of_arrays = {key: np.vstack(dict_of_arrays[key]) for key in dict_of_arrays.keys()}
-        return dict_of_arrays, env.get_reward()
+        return dict_of_arrays, env.get_reward(), mode_data
     else:
-        return None, None
+        return None, None, mode_data
+
 
 def playback_trajectory_with_obs(
     traj_grp,
@@ -285,6 +290,7 @@ def playback_trajectory_with_obs(
 
         if first:
             break
+
 
 def perturb_traj(orig, pert_range=0.1):
     # orig actions (traj_len, 7), this is perturbation in the joint space
@@ -341,33 +347,30 @@ def playback_dataset(args):
                     rgb=[],
                 ),
         )
-        ObsUtils.initialize_obs_utils_with_obs_specs(obs_modality_specs=dummy_spec)
 
-        # from IPython import embed; embed()
+        ObsUtils.initialize_obs_utils_with_obs_specs(obs_modality_specs=dummy_spec)
         env_meta = FileUtils.get_env_metadata_from_dataset(dataset_path=args.dataset)
         # directly control ee pose
-        env_meta['env_kwargs']['controller_configs']['control_delta'] = False
-        env_meta['env_kwargs']['controller_configs']['control_ori'] = False
-        env_meta['env_kwargs']['controller_configs']['kp'] = 1000
-        env_meta['env_kwargs']['controller_configs']['kp_limits'] = [0, 1000]
-        env_meta['env_kwargs']['controller_configs']['output_max'] = [2, 2, 2, 1, 1, 1, 1] # these values are just placeholders
-        env_meta['env_kwargs']['controller_configs']['output_min'] = [-2, -2, -2, -1, -1, -1, -1]        
+        env_meta['env_kwargs']['controller_configs']['control_delta'] = True
+        env_meta['env_kwargs']['controller_configs']['control_ori'] = True
+        env_meta['env_kwargs']['controller_configs']['kp'] = 150
+        # env_meta['env_kwargs']['controller_configs']['kp_limits'] = [0, 1000]
+        # env_meta['env_kwargs']['controller_configs']['output_max'] = [2, 2, 2, 1, 1, 1, ] # these values are just placeholders
+        # env_meta['env_kwargs']['controller_configs']['output_min'] = [-2, -2, -2, -1, -1, -1]        
         env = EnvUtils.create_env_from_metadata(env_meta=env_meta, render=args.render, render_offscreen=write_video)
 
-        # some operations for playback are robosuite-specific, so determine if this environment is a robosuite env
-        is_robosuite_env = EnvUtils.is_robosuite_env(env_meta)
-
     f = h5py.File(args.dataset, "r")
-    # from IPython import embed; embed()
     # list of all demonstration episodes (sorted in increasing number order)
     if args.filter_key is not None:
         print("using filter key: {}".format(args.filter_key))
         demos = [elem.decode("utf-8") for elem in np.array(f["mask/{}".format(args.filter_key)])]
     else:
         demos = list(f["data"].keys())
-    # from IPython import embed; embed()
-    # inds = np.argsort([int(elem[5:]) for elem in demos])
-    # demos = [demos[i] for i in inds]
+
+    if args.fail:
+        demos = [demo for demo in demos if 'fail' in demo]
+    elif args.succ:
+        demos = [demo for demo in demos if 'succ' in demo]
 
     # maybe reduce the number of demonstrations to playback
     if args.n is not None:
@@ -397,120 +400,127 @@ def playback_dataset(args):
                     for j in range(sample_size)
                 ]
 
-        # ic = []
-        # for i in range(len(demos)):
-        #     rgba_random = np.random.uniform(0, 1, 3).tolist() + [0.5]
-        #     blue = [0, 0, 1, 1] 
-        #     red = [1, 0, 0, 1]
-        #     if args.use_actions:
-        #         rgba1 = blue
-        #         rgba2 = red
-        #     else:
-        #         rgba1 = rgba_random
-        #         rgba2 = rgba_random
-        #     ic += [
-        #         {
-        #         "type": "sphere",
-        #         "size": [0.004],
-        #         "rgba": rgba1,
-        #         "name": "site{}".format(i * sample_size + j),
-        #         }
-        #         for j in range(sample_size//2)
-        #     ]
-        #     ic += [
-        #         {
-        #         "type": "sphere",
-        #         "size": [0.004],
-        #         "rgba": rgba2,
-        #         "name": "site{}".format(i * sample_size + sample_size//2 + j),
-        #         }
-        #         for j in range(sample_size//2)
-        #     ]
-
         env.env = VisualizationWrapper(env.env, indicator_configs=ic)
         env.env.reset()
         env.env.set_visualization_setting('grippers', True)
-        # from IPython import embed; embed()
 
+    ########################################################
     # load trained up model
-    # eva = eval.Evaluator('yanweiw/robosuite/o4vfobq9')
-    # eva = eval.Evaluator('yanweiw/robosuite/9oxfdli6')
-    eva = eval.Evaluator(args.run_path)
+    ########################################################
+    eva = eval.Evaluator(args.run_path, args.task)
     eva.load_model(epoch_num=args.epoch, root_dir=args.weight_dir)      
 
     # loop to visualize each trajectory
-    for ind in range(len(demos)):
-        ep = demos[ind]
-        print("Playing back episode: {}".format(ep))
+    all_mode_data = []
+    pbar = tqdm.tqdm(range(len(demos)), total=len(demos))
+    for ind in pbar:
+        try:
+            ep = demos[ind]
+            # print("Playing back episode: {}".format(ep))
+            pbar.set_description("Playing back episode: {}".format(ep))
 
-        data_save_path = None
-        if args.gen_data_dir is not None:
-            data_save_path = os.path.join(args.gen_data_dir, ep)
-            os.makedirs(data_save_path, exist_ok=True)        
-        
-        if args.use_obs:
-            playback_trajectory_with_obs(
-                traj_grp=f["data/{}".format(ep)], 
+            data_save_path = None
+            if args.gen_data_dir is not None:
+                data_save_path = os.path.join(args.gen_data_dir, ep)
+                os.makedirs(data_save_path, exist_ok=True)        
+            
+            if args.use_obs:
+                playback_trajectory_with_obs(
+                    traj_grp=f["data/{}".format(ep)], 
+                    video_writer=video_writer, 
+                    video_skip=args.video_skip,
+                    image_names=args.render_image_names,
+                    first=args.first,
+                )
+                continue
+
+            # prepare initial state to reload from
+            states = f["data/{}/states".format(ep)][()]
+            initial_state = dict(states=states[0])
+
+            # if is_robosuite_env:
+            #     initial_state["model"] = f["data/{}".format(ep)].attrs["model_file"]
+            orig_pos = f["data/{}/robot0_eef_pos".format(ep)][()] # [()] turn h5py dataset into numpy array
+            gripper = f["data/{}/robot0_gripper_qpos".format(ep)][()] 
+            gripper_state = ((gripper[:, 0] - gripper[:, 1]) > 0.06).astype(np.float32).reshape(-1, 1)
+            if "can" in args.dataset:
+                obj_pos = f["data/{}/Can_pos".format(ep)][()]
+            elif "lift" in args.dataset:
+                obj_pos = f["data/{}/cube_pos".format(ep)][()]
+            elif "square" in args.dataset:
+                obj_pos = f["data/{}/SquareNut_pos".format(ep)][()]
+            else:
+                raise ValueError(f"Unrecognized dataset {args.dataset} to fetch obj_pos")
+            if "square" in args.dataset:
+                # mode_pred_states = np.hstack((
+                #     obj_pos-orig_pos,
+                #     gripper,
+                #     obj_pos,
+                #     f["data/{}/SquareNut_handle_site".format(ep)][()],
+                #     f["data/{}/SquareNut_center_site".format(ep)][()],
+                #     f["data/{}/SquareNut_side_site".format(ep)][()],
+                #     f["data/{}/gripper0_grip_site".format(ep)][()],
+                #     f["data/{}/gripper0_left_ee_site".format(ep)][()],
+                #     f["data/{}/gripper0_right_ee_site".format(ep)][()],
+                # ))
+                mode_pred_states = []
+                for target in ['SquareNut_handle_site','SquareNut_center_site','SquareNut_side_site']:
+                    mode_pred_states.append(f['data'][ep]['peg_site'][:] - f['data'][ep][target][:])
+                    for keypoint in ['gripper0_grip_site', 'gripper0_left_ee_site', 'gripper0_right_ee_site']:
+                        mode_pred_states.append(f['data'][ep][target][:] - f['data'][ep][keypoint][:])
+                mode_pred_states.append(gripper)
+                mode_pred_states = np.concatenate(mode_pred_states, axis=1)
+            else:
+                mode_pred_states = np.hstack((obj_pos-orig_pos, gripper, obj_pos))
+
+            # supply actions if using open-loop action playback
+            actions = None
+            if args.use_actions:
+                actions = f["data/{}/actions".format(ep)][()]
+
+                # supply eef pos
+                # orig_pos = f["data/{}/obs/robot0_eef_pos".format(ep)][()] # [()] turn h5py dataset into numpy array
+                eef_pos = perturb_traj(orig_pos, pert_range=0.2)
+                # supply eef quat 
+                eef_quat = f["data/{}/obs/robot0_eef_quat".format(ep)][()]
+                # actions = np.hstack((eef_pos, eef_quat, actions[:, [-1]])) # append gripper action
+                actions = np.hstack((eef_pos, actions[:, [-1]])) # append gripper action
+
+
+            # from IPython import embed; embed()
+
+            dict_of_obs, success, mode_data = playback_trajectory_with_env(
+                env=env, 
+                initial_state=initial_state, 
+                states=states, orig_pos=orig_pos, actions=actions, 
+                render=args.render, 
                 video_writer=video_writer, 
                 video_skip=args.video_skip,
-                image_names=args.render_image_names,
+                camera_names=args.render_image_names,
                 first=args.first,
+                demo_idx=ind,
+                sample_size=sample_size,
+                data_save_path=data_save_path,
+                mode_pred_states=mode_pred_states,
+                model=eva,
+                guess_idx=args.guess_idx,
             )
-            continue
+            all_mode_data.append(mode_data)
 
-        # prepare initial state to reload from
-        states = f["data/{}/states".format(ep)][()]
-        initial_state = dict(states=states[0])
-
-        # if is_robosuite_env:
-        #     initial_state["model"] = f["data/{}".format(ep)].attrs["model_file"]
-        orig_pos = f["data/{}/robot0_eef_pos".format(ep)][()] # [()] turn h5py dataset into numpy array
-        gripper = f["data/{}/robot0_gripper_qpos".format(ep)][()] 
-        gripper_state = ((gripper[:, 0] - gripper[:, 1]) > 0.06).astype(np.float32).reshape(-1, 1)
-        can_pos = f["data/{}/Can_pos".format(ep)][()]
-        mode_pred_states = np.hstack((can_pos-orig_pos, gripper, can_pos))
-
-        # supply actions if using open-loop action playback
-        actions = None
-        if args.use_actions:
-            actions = f["data/{}/actions".format(ep)][()]
-
-            # supply eef pos
-            # orig_pos = f["data/{}/obs/robot0_eef_pos".format(ep)][()] # [()] turn h5py dataset into numpy array
-            eef_pos = perturb_traj(orig_pos, pert_range=0.2)
-            # supply eef quat 
-            eef_quat = f["data/{}/obs/robot0_eef_quat".format(ep)][()]
-            # actions = np.hstack((eef_pos, eef_quat, actions[:, [-1]])) # append gripper action
-            actions = np.hstack((eef_pos, actions[:, [-1]])) # append gripper action
-
-
-        # from IPython import embed; embed()
-
-        dict_of_obs, success = playback_trajectory_with_env(
-            env=env, 
-            initial_state=initial_state, 
-            states=states, orig_pos=orig_pos, actions=actions, 
-            render=args.render, 
-            video_writer=video_writer, 
-            video_skip=args.video_skip,
-            camera_names=args.render_image_names,
-            first=args.first,
-            demo_idx=ind,
-            sample_size=sample_size,
-            data_save_path=data_save_path,
-            mode_pred_states=mode_pred_states,
-            model=eva,
-            guess_idx=args.guess_idx,
-        )
-
-        # from IPython import embed; embed()
-        if args.gen_data_dir is not None:
-            dict_of_obs['success'] = success
-            # dict_of_obs['env_args'] = f['data'].attrs['env_args']
-            with open(os.path.join(data_save_path, "env_args.txt"), "w") as outfile:
-                outfile.write(f['data'].attrs['env_args'])
-        
-            np.savez(os.path.join(data_save_path, 'obs.npz'), **dict_of_obs)
+            # from IPython import embed; embed()
+            if args.gen_data_dir is not None:
+                dict_of_obs['success'] = success
+                # dict_of_obs['env_args'] = f['data'].attrs['env_args']
+                with open(os.path.join(data_save_path, "env_args.txt"), "w") as outfile:
+                    outfile.write(f['data'].attrs['env_args'])
+            
+                np.savez(os.path.join(data_save_path, 'obs.npz'), **dict_of_obs)
+        except KeyboardInterrupt:
+            break
+            
+    if args.mode_data_path:
+        with open(args.mode_data_path, "wb") as f:
+            pickle.dump(all_mode_data, f)
 
     f.close()
     if write_video:
@@ -587,6 +597,14 @@ if __name__ == "__main__":
         default=5,
         help="render frames to video every n steps",
     )
+    
+    # Dump a video of the dataset playback to the specified path
+    parser.add_argument(
+        "--mode_data_path",
+        type=str,
+        default=None,
+        help="(optional) dump predicted and ground-truth mode data",
+    )
 
     # camera names to render, or image observations to use for writing to video
     parser.add_argument(
@@ -634,6 +652,28 @@ if __name__ == "__main__":
         type=str,
         default='/home/felixw/mode_learning/weights',
         help="path to the base weight directory",
+    )
+
+    # use only succ demos
+    parser.add_argument(
+        "--succ",   
+        action='store_true',
+        help="use only successful demos",
+    )
+
+    # use only fail demos
+    parser.add_argument(
+        "--fail",
+        action='store_true',
+        help="use only failed demos",
+    )
+
+    # specify the task
+    parser.add_argument(
+        "--task",
+        type=str,
+        required=True,
+        help="name of the task",
     )
 
     args = parser.parse_args()
