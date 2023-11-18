@@ -220,6 +220,9 @@ def rollout(policy, env, horizon, render=False, video_writer=None, video_skip=5,
                     obj_pos = torch.from_numpy(obs["object"][:3])
                     dist_eef_obj = torch.linalg.norm(obj_pos.data - eef_pos.data, 2)
                     if current_mode.name == "free":
+                        # handle_site_pos = env.env.sim.data.get_site_xpos("SquareNut_handle_site")
+                        # gripper_pos = env.env.sim.data.get_site_xpos(env.env.robots[0].gripper.important_sites["grip_site"])
+                        # attractor = torch.Tensor(handle_site_pos - gripper_pos)
                         attractor = torch.Tensor([-0.00109405, -0.00054479, 0.01984971]) # relative
                         attractor[2] *= 1.5 # NOTE: place the attractor a bit higher
                         potential_T = 1.
@@ -231,8 +234,9 @@ def rollout(policy, env, horizon, render=False, video_writer=None, video_skip=5,
                             # dist = torch.abs(_x_in_attractor_space - attractor).mean()
                             return torch.exp(dist / potential_T)
                     elif current_mode.name == "grasping":
-                        attractor = torch.Tensor([0.16372011, 0.11015255, 0.96184433])
-                        attractor[2] *= 1.5 # NOTE: place the attractor a bit higher
+                        # attractor = torch.Tensor([0.16372011, 0.11015255, 0.96184433])
+                        attractor = torch.Tensor([0.16372011, 0.11015255, 0.90184433])
+                        attractor[2] *= 1. # NOTE: place the attractor a bit higher
                         potential_T = 1.
                         coef = 0.05
                         min_dist_eef_obj = 0.1 # NOTE: not using attractor controller

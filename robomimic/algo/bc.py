@@ -19,7 +19,14 @@ import robomimic.utils.tensor_utils as TensorUtils
 import robomimic.utils.torch_utils as TorchUtils
 import robomimic.utils.obs_utils as ObsUtils
 
-import mode_learning.eval as classeval
+# mode_learning_parent_dir = "/home/tsunw/workspace/mode_learning_meta"
+# import sys; sys.path.append(mode_learning_parent_dir)
+# import mode_learning.eval as classeval
+# sys.path.remove(mode_learning_parent_dir)
+mode_learning_dir = "/home/tsunw/workspace/mode_learning_meta/mode_learning"
+import importlib.util
+spec = importlib.util.spec_from_file_location("classeval", f"{mode_learning_dir}/eval.py")
+classeval = importlib.util.module_from_spec(spec)
 
 from robomimic.algo import register_algo_factory_func, PolicyAlgo
 
