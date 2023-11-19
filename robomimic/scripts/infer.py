@@ -415,7 +415,7 @@ def playback_dataset(args):
     ########################################################
     # load trained up model
     ########################################################
-    eva = eval.Evaluator(args.run_path, args.task)
+    eva = eval.Evaluator(args.run_path, args.task, is_full_features=args.is_full_features)
     eva.load_model(epoch_num=args.epoch, root_dir=args.weight_dir)      
 
     # loop to visualize each trajectory
@@ -480,6 +480,20 @@ def playback_dataset(args):
                 mode_pred_states = np.concatenate(mode_pred_states, axis=1)
             else:
                 mode_pred_states = np.hstack((obj_pos-orig_pos, gripper, obj_pos))
+
+            if args.is_full_features:
+                full_feats = []
+                for site in f['data'][ep].keys():
+                    if 'success' in site:
+                        continue
+                    if 'states' in site:
+                        continue
+                    if args.task == 'square':
+                        if 'site' in site:
+                            continue
+                    full_feats.append(f['data'][ep][site][:])
+                full_feats = np.concatenate(full_feats, axis=1)
+                mode_pred_states = full_feats
 
             # supply actions if using open-loop action playback
             actions = None
@@ -682,6 +696,13 @@ if __name__ == "__main__":
         type=str,
         required=True,
         help="name of the task",
+    )
+
+    # full features
+    parser.add_argument(
+        "--is-full-features",
+        action='store_true',
+        help="use full features as the inputs of the model",
     )
 
     args = parser.parse_args()
