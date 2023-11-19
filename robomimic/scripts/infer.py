@@ -86,15 +86,22 @@ DEFAULT_CAMERAS = {
     EnvType.GYM_TYPE: ValueError("No camera names supported for gym type env!"),
 }
 
-mode_colors = [[1.0, 0.0, 0.0], 
-                [0.0, 1.0, 0.0],
-                [0.0, 0.0, 1.0],
-                [0.5, 0.5, 0.0], 
-                [0.5, 0.0, 0.5],
-                [0.0, 0.5, 0.5],
-                [0.6, 0.2, 0.2], 
-                [0.2, 0.6, 0.2],
-                [0.2, 0.2, 0.6]]
+mode_colors = [
+    [168, 209, 209],
+    [253, 138, 138],
+    [241, 247, 181],
+    [158, 161, 212],
+]
+mode_colors = np.array(mode_colors) / 255.
+# [[1.0, 0.0, 0.0], 
+#                 [0.0, 1.0, 0.0],
+#                 [0.0, 0.0, 1.0],
+#                 [0.5, 0.5, 0.0], 
+#                 [0.5, 0.0, 0.5],
+#                 [0.0, 0.5, 0.5],
+#                 [0.6, 0.2, 0.2], 
+#                 [0.2, 0.6, 0.2],
+#                 [0.2, 0.2, 0.6]]
 
 USE_MODE_TRACKER = True
 if USE_MODE_TRACKER:
@@ -229,6 +236,7 @@ def playback_trajectory_with_env(
                     pred_mode_idx.append(mode_idx[i])
                     if USE_MODE_TRACKER:
                         gt_mode_idx_i = env.env.unwrapped.POSSIBLE_MODES_CLS.index(mode_tracker.latest_mode.__class__)
+                        # print(mode_tracker.latest_mode, gt_mode_idx_i)
                         gt_mode_idx.append(gt_mode_idx_i)
                         boundary_color_gt = np.array(mode_colors[gt_mode_idx_i]) * 255
                         orig_img[20:40, :] = boundary_color_gt
@@ -389,11 +397,11 @@ def playback_dataset(args):
         ic = []
         for i in range(1): #range(len(demos)):
             for mode_idx, color in enumerate(mode_colors):
-                rgba = color + [0.5]
+                rgba = list(color) + [1.] #[0.5]
                 ic += [
                     {
                     "type": "sphere",
-                    "size": [0.004],
+                    "size": [0.01], #[0.004],
                     "rgba": rgba,
                     "name": "mode_{}_{}".format(mode_idx, i * sample_size + j),
                     }
