@@ -28,12 +28,21 @@ def prepare_data_can(datapath, filename, max_len=200):
     fail_states = []
     et_succ_states = []
     et_fail_states = []
-    for demo in f['data'].keys():
-        eef_pos = f['data'][demo]['robot0_eef_pos'][:]
-        gripper = f['data'][demo]['robot0_gripper_qpos'][:]
-        gripper_state = ((gripper[:, 0] - gripper[:, 1]) > 0.06).astype(np.float32).reshape(-1, 1)
-        obj_pos = f['data'][demo]['Can_pos'][:]
-        state = np.concatenate((obj_pos-eef_pos, gripper, obj_pos), axis=1)
+    for demo in f['data'].keys():      
+        # eef_pos = f['data'][demo]['robot0_eef_pos'][:]
+        # gripper = f['data'][demo]['robot0_gripper_qpos'][:]
+        # gripper_state = ((gripper[:, 0] - gripper[:, 1]) > 0.06).astype(np.float32).reshape(-1, 1)
+        # obj_pos = f['data'][demo]['Can_pos'][:]
+        # state = np.concatenate((obj_pos-eef_pos, gripper, obj_pos), axis=1)
+        state = []
+        for site in f['data'][demo].keys():
+            if 'success' in site:
+                continue
+            if 'states' in site:
+                continue
+            state.append(f['data'][demo][site][:])
+        state = np.concatenate(state, axis=1)
+
         assert len(state) < max_len
         state = np.pad(state, ((0, max_len - len(state)), (0, 0)), 'edge')
         if 'succ' in demo:
@@ -46,7 +55,7 @@ def prepare_data_can(datapath, filename, max_len=200):
                 et_fail_states.append(state)
             else:
                 fail_states.append(state)
-    return np.stack(succ_states), np.stack(fail_states), np.stack(et_succ_states), np.stack(et_fail_states)
+    return np.stack(succ_states), np.stack(fail_states) #, np.stack(et_succ_states), np.stack(et_fail_states)
 
 def prepare_data_lift(datapath, filename, max_len=200):
     f = h5py.File(os.path.join(datapath, filename + '.hdf5'), 'r')
@@ -55,11 +64,20 @@ def prepare_data_lift(datapath, filename, max_len=200):
     et_succ_states = []
     et_fail_states = []
     for demo in f['data'].keys():
-        eef_pos = f['data'][demo]['robot0_eef_pos'][:]
-        gripper = f['data'][demo]['robot0_gripper_qpos'][:]
-        gripper_state = ((gripper[:, 0] - gripper[:, 1]) > 0.06).astype(np.float32).reshape(-1, 1)
-        obj_pos = f['data'][demo]['cube_pos'][:]
-        state = np.concatenate((obj_pos-eef_pos, gripper, obj_pos), axis=1)
+        # eef_pos = f['data'][demo]['robot0_eef_pos'][:]
+        # gripper = f['data'][demo]['robot0_gripper_qpos'][:]
+        # gripper_state = ((gripper[:, 0] - gripper[:, 1]) > 0.06).astype(np.float32).reshape(-1, 1)
+        # obj_pos = f['data'][demo]['cube_pos'][:]
+        # state = np.concatenate((obj_pos-eef_pos, gripper, obj_pos), axis=1)
+        state = []
+        for site in f['data'][demo].keys():
+            if 'success' in site:
+                continue
+            if 'states' in site:
+                continue
+            state.append(f['data'][demo][site][:])
+        state = np.concatenate(state, axis=1)
+
         assert len(state) < max_len
         state = np.pad(state, ((0, max_len - len(state)), (0, 0)), 'edge')
         if 'succ' in demo:
@@ -83,57 +101,26 @@ def prepare_data_square(datapath, filename, max_len=200):
 
     num_of_demo_to_discard = 0
     for demo in f['data'].keys():
-    #     nut_pos = f['data'][demo]['SquareNut_pos'][:]
-    #     nut_quat = f['data'][demo]['SquareNut_quat'][:]
-    #     nut2eef_pos = f['data'][demo]['SquareNut_to_robot0_eef_pos'][:]
-    #     nut2eef_quat = f['data'][demo]['SquareNut_to_robot0_eef_quat'][:]
-    #     eef_pos = f['data'][demo]['robot0_eef_pos'][:]
-    #     eef_quat = f['data'][demo]['robot0_eef_quat'][:]
-
-        # nut_euler = []
-        # for i in range(len(nut_quat)):
-        #     nut_euler.append(T.quat2axisangle(nut_quat[i]))
-        # nut_euler = np.array(nut_euler)
-        # nut2eef_euler = []
-        # for i in range(len(nut2eef_quat)):
-        #     nut2eef_euler.append(T.quat2axisangle(nut2eef_quat[i]))
-        # nut2eef_euler = np.array(nut2eef_euler)
-
-        # nut_6d = []
-        # for i in range(len(nut_quat)):
-        #     nut_6d.append(T.quat2mat(nut_quat[i])[:2].flatten())
-        # nut_6d = np.array(nut_6d)
-        # nut2eef_6d = []
-        # for i in range(len(nut2eef_quat)):
-        #     nut2eef_6d.append(T.quat2mat(nut2eef_quat[i])[:2].flatten())
-        # nut2eef_6d = np.array(nut2eef_6d)
-        # eef_6d = []
-        # for i in range(len(eef_quat)):
-        #     eef_6d.append(T.quat2mat(eef_quat[i])[:2].flatten())
-        # eef_6d = np.array(eef_6d)
-
-        # eef_pos = f['data'][demo]['robot0_eef_pos'][:]
-        gripper = f['data'][demo]['robot0_gripper_qpos'][:]
-        # gripper_state = ((gripper[:, 0] - gripper[:, 1]) > 0.06).astype(np.float32).reshape(-1, 1)
-        # obj_pos = f['data'][demo]['cube_pos'][:]
-        # state = np.concatenate((eef_pos, eef_6d, nut_pos, nut_6d, nut2eef_pos, nut2eef_6d, gripper), axis=1)
-        # state = np.concatenate((nut_pos, nut_6d, nut2eef_pos, nut2eef_6d, gripper), axis=1)
-
-        print(demo)
-        state = []
-        for target in ['SquareNut_handle_site','SquareNut_center_site','SquareNut_side_site']:
-            # state.append(f['data'][demo][target][:])
-            state.append(f['data'][demo]['peg_site'][:] - f['data'][demo][target][:])
-            for keypoint in ['gripper0_grip_site', 'gripper0_left_ee_site', 'gripper0_right_ee_site']:
-                state.append(f['data'][demo][target][:] - f['data'][demo][keypoint][:])
-        state.append(gripper)
-        state = np.concatenate(state, axis=1)
-
+        # gripper = f['data'][demo]['robot0_gripper_qpos'][:]
+        # print(demo)
         # state = []
-        # for site in ['peg_site', 'gripper0_grip_site', 'gripper0_left_ee_site', 'gripper0_right_ee_site', 'SquareNut_handle_site', 'SquareNut_center_site', 'SquareNut_side_site']:
-        #     state.append(f['data'][demo][site][:])
+        # for target in ['SquareNut_handle_site','SquareNut_center_site','SquareNut_side_site']:
+        #     # state.append(f['data'][demo][target][:])
+        #     state.append(f['data'][demo]['peg_site'][:] - f['data'][demo][target][:])
+        #     for keypoint in ['gripper0_grip_site', 'gripper0_left_ee_site', 'gripper0_right_ee_site']:
+        #         state.append(f['data'][demo][target][:] - f['data'][demo][keypoint][:])
         # state.append(gripper)
         # state = np.concatenate(state, axis=1)
+
+        state = []
+        for site in f['data'][demo].keys():
+            if 'success' in site:
+                continue
+            if 'states' in site:
+                continue
+            state.append(f['data'][demo][site][:])
+        # state.append(gripper)
+        state = np.concatenate(state, axis=1)
 
         try:
             assert len(state) < max_len
@@ -189,7 +176,7 @@ if __name__  == "__main__":
 
     args = parser.parse_args()
     if args.task == 'can':
-        succ_states, fail_states, et_succ_states, et_fail_states = prepare_data_can(args.datapath, args.filename)
+        succ_states, fail_states = prepare_data_can(args.datapath, args.filename)
     if args.task == 'lift':
         succ_states, fail_states, et_succ_states, et_fail_states = prepare_data_lift(args.datapath, args.filename)
     if args.task == 'square':
@@ -200,7 +187,8 @@ if __name__  == "__main__":
 #     ...:     plt.plot(succ[:10, :, j].T, c='g', alpha=0.2*i + 0.2)
 
 
-    np.save(os.path.join(args.datapath, args.filename + '_succ.npy'), succ_states[:args.n])
-    np.save(os.path.join(args.datapath, args.filename + '_fail.npy'), fail_states[:args.n])
-    np.save(os.path.join(args.datapath, args.filename + '_et_succ.npy'), et_succ_states[:args.n])
-    np.save(os.path.join(args.datapath, args.filename + '_et_fail.npy'), et_fail_states[:args.n])
+    np.save(os.path.join(args.datapath, args.filename + 'full_feature_succ.npy'), succ_states[:args.n])
+    np.save(os.path.join(args.datapath, args.filename + 'full_feature_fail.npy'), fail_states[:args.n])
+
+    # np.save(os.path.join(args.datapath, args.filename + 'full_feature_et_succ.npy'), et_succ_states[:args.n])
+    # np.save(os.path.join(args.datapath, args.filename + 'full_feature_et_fail.npy'), et_fail_states[:args.n])
